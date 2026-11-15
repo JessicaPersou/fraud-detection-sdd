@@ -1,0 +1,75 @@
+# Ambiente local de desenvolvimento.
+# Credenciais abaixo são APENAS para desenvolvimento local. Não reutilizar em outros ambientes.
+#
+# Uso:
+#   docker compose -f infrastructure/docker/docker-compose.yml up -d --wait
+#
+# Parâmetros dos tópicos: docs/adr/0005-consumidores-kafka.md
+
+name: antifraud
+
+services:
+  kafka:
+    image: apache/kafka:3.9.1
+    container_name: antifraud-kafka
+    ports:
+      - "29092:29092"   # acesso a partir do host (serviços Spring rodando na máquina)
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  kafka-init:
+    image: apache/kafka:3.9.1
+    container_name: antifraud-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        K=/opt/kafka/bin/kafka-topics.sh
+        B=kafka:9092
+        # Tópicos principais: 12 partições (hipótese, ADR 0005). Retenção de 7 dias.
+        $$K --bootstrap-server $$B --create --if-not-exists --topic transaction-events --partitions 12 --replication-factor 1 --config retention.ms=604800000
+        $$K --bootstrap-server $$B --create --if-not-exists --topic fraud-alerts --partitions 12 --replication-factor 1 --config retention.ms=604800000
+        # DLQs (ADR 0005, seção 1)
+        $$K --bootstrap-server $$B --create --if-not-exists --topic transaction-events.DLT --partitions 12 --replication-factor 1
+        $$K --bootstrap-server $$B --create --if-not-exists --topic fraud-alerts.DLT --partitions 12 --replication-factor 1
+        echo "Tópicos criados:"
+        $$K --bootstrap-server $$B --list
+
+  mysql:
+    image: mysql:8.4
+    container_name: antifraud-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-antifraud_root_dev}
+    volumes:
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  mysql-data:
