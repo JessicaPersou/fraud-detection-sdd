@@ -9,7 +9,14 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * (ADR 0001, decisão 10): a aplicação não sobe sem eles.
  */
 @ConfigurationProperties(prefix = "fraud")
-public record FraudProperties(Rules rules, Kafka kafka) {
+public record FraudProperties(Rules rules, Kafka kafka, Retention retention) {
+
+    /**
+     * @param inbox retenção da inbox, maior que a do tópico (ADR 0005, seção 4)
+     * @param cleanupIntervalMs intervalo do job de limpeza
+     */
+    public record Retention(Duration inbox, long cleanupIntervalMs) {
+    }
 
     public record Rules(Amount amount, Frequency frequency) {
     }

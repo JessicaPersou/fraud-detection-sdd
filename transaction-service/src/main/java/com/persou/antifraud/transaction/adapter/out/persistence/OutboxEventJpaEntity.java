@@ -39,13 +39,17 @@ public class OutboxEventJpaEntity {
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 
+    @Column(name = "trace_parent", length = 80)
+    private String traceParent;
+
     @Column(name = "published_at")
     private Instant publishedAt;
 
     protected OutboxEventJpaEntity() {
     }
 
-    OutboxEventJpaEntity(OutboxMessage message) {
+    OutboxEventJpaEntity(OutboxMessage message, String traceParent) {
+        this.traceParent = traceParent;
         this.eventId = message.eventId();
         this.aggregateId = message.aggregateId();
         this.eventType = message.eventType();
@@ -64,6 +68,10 @@ public class OutboxEventJpaEntity {
 
     public String getPartitionKey() {
         return partitionKey;
+    }
+
+    public String getTraceParent() {
+        return traceParent;
     }
 
     public String getPayload() {

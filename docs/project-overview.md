@@ -30,7 +30,7 @@ Desenvolver um motor capaz de analisar transações financeiras em tempo real, i
 
 ### Definição provisória do SLA
 
-A medição de 500 ms começa quando o Transaction Service recebe a transação e termina quando o evento de alerta é publicado no tópico `fraud-alerts`. A meta vale para transações que geram alerta. A latência da análise sem alerta é medida à parte.
+A medição de 500 ms começa quando o Transaction Service recebe a transação. A meta vale para todas as transações, sem exceção. O término depende do resultado: para transações MEDIUM ou HIGH, é a publicação do alerta em `fraud-alerts`; para transações LOW, que não geram alerta, é a gravação da análise no banco do Fraud Detection.
 
 A meta deve ser validada por testes de carga, incluindo p95 e p99.
 
@@ -92,7 +92,7 @@ Os serviços comunicam-se assincronamente por Apache Kafka e seguem Arquitetura 
 - Limites definitivos das regras de fraude.
 - Precisão e janela temporal da regra de frequência.
 - Critérios de localização suspeita e disponibilidade dos dados geográficos.
-- Hospedagem de produção na AWS: ADR 0008 (EKS, RDS for MySQL e Confluent Cloud). Região: sa-east-1 (São Paulo). Confluent Dedicated com PrivateLink. Pendentes: sistema chamador com mTLS, validação do OIDC com o Confluent, limites e custo do Dedicated e residência de dados.
+- Arquitetura alvo na AWS: justificada no ADR 0008 (EKS, RDS for MySQL, Confluent Cloud, região `sa-east-1`).
 - Consistência banco × Kafka resolvida pelo Transactional Outbox com publicação por polling (ADR 0001 e ADR 0003).
 - Provedor e SLA de notificação externa.
 - Requisitos de segurança, privacidade e LGPD.

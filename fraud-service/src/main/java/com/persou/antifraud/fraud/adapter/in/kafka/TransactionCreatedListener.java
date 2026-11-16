@@ -20,18 +20,21 @@ import tools.jackson.databind.ObjectMapper;
  * Consumidor de {@code transaction-events}. Offset confirmado após o retorno do caso de uso
  * (ack-mode record, enable-auto-commit false; ADR 0001, decisão 8).
  *
- * <p>Registra a latência ponta a ponta: do {@code occurredAt} (recebimento da transação) até o alerta
- * publicado. É a medição do SLA de 500 ms (ADR 0008, seção 2.8).
+ * <p>Registra a latência ponta a ponta de todas as transações, desde o {@code occurredAt} (recebimento). Para
+ * transações com alerta, o término é a publicação do alerta (`fraud.alert.latency`); para as LOW, a gravação
+ * da análise (`fraud.analysis.latency`). É a medição do SLA de 500 ms (ADR 0008, seção 2.8).
  */
 @Component
 class TransactionCreatedListener {
 
     static final String LATENCY_METRIC = "fraud.alert.latency";
+    static final String ANALYSIS_LATENCY_METRIC = "fraud.analysis.latency";
 
     private final AnalyzeTransactionUseCase analyze;
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final Timer alertLatency;
+    private final Timer analysisLatency;
 
     TransactionCreatedListener(AnalyzeTransactionUseCase analyze, ObjectMapper objectMapper, Clock clock,
                                MeterRegistry meterRegistry) {
@@ -42,14 +45,24 @@ class TransactionCreatedListener {
                 .description("Tempo do recebimento da transação até a publicação do alerta")
                 .publishPercentiles(0.5, 0.95, 0.99)
                 .register(meterRegistry);
+        this.analysisLatency = Timer.builder(ANALYSIS_LATENCY_METRIC)
+                .description("Tempo do recebimento até a gravação da análise de transações LOW (sem alerta)")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .register(meterRegistry);
     }
 
     @KafkaListener(topics = "${fraud.kafka.transaction-topic}", groupId = "${fraud.kafka.consumer-group}")
     void onTransactionCreated(String payload) {
         TransactionCreatedEvent event = parse(payload);
         AnalysisResult result = analyze.analyze(event);
-        if (result.alertPublished() && event.occurredAt() != null) {
-            alertLatency.record(Duration.between(event.occurredAt(), clock.instant()));
+        if (event.occurredAt() == null || result.duplicate()) {
+            return;
+        }
+        Duration elapsed = Duration.between(event.occurredAt(), clock.instant());
+        if (result.alertPublished()) {
+            alertLatency.record(elapsed);
+        } else {
+            analysisLatency.record(elapsed);
         }
     }
 

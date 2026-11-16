@@ -17,6 +17,10 @@ spring:
   flyway:
     locations: classpath:db/migration/transaction
   kafka:
+    template:
+      observation-enabled: true   # propaga traceId nos cabeçalhos das mensagens (ADR 0010)
+    listener:
+      observation-enabled: true
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
     producer:
       acks: all
@@ -32,11 +36,17 @@ transaction:
     poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:200}  # ADR 0003
     batch-size: ${OUTBOX_BATCH_SIZE:500}              # ADR 0003
     topic: ${TRANSACTION_EVENTS_TOPIC:transaction-events}
+  retention:
+    published-outbox: ${OUTBOX_PUBLISHED_RETENTION:P7D}   # ADR 0009: mantido por 7 dias após publicado
+    cleanup-interval-ms: ${RETENTION_CLEANUP_INTERVAL_MS:3600000}
 
 server:
   port: ${SERVER_PORT:8081}
 
 management:
+  tracing:
+    sampling:
+      probability: 1.0   # demonstração: todas as transações geram spans (ADR 0010)
   endpoints:
     web:
       exposure:

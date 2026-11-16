@@ -1,6 +1,15 @@
 package com.persou.antifraud.transaction.adapter.out.persistence;
 
-import org.springframework.data.jpa.repository.JpaRepository;
+import java.time.Instant;
 
-interface SpringDataIdempotencyKeyRepository extends JpaRepository<IdempotencyKeyJpaEntity, String> {
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+public interface SpringDataIdempotencyKeyRepository extends JpaRepository<IdempotencyKeyJpaEntity, String> {
+
+    @Modifying
+    @Query("delete from IdempotencyKeyJpaEntity e where e.expiresAt < :now")
+    int deleteExpired(@Param("now") Instant now);
 }
