@@ -71,5 +71,13 @@ services:
       timeout: 5s
       retries: 20
 
+  # Servidor SMTP de teste: captura os e-mails sem entregar a ninguém. Interface web em http://localhost:8025.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: antifraud-mailpit
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # interface web
+
 volumes:
   mysql-data:

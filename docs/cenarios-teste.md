@@ -109,13 +109,13 @@ Referência: `specs/notification-service`; ADR 0002.
 
 | ID | Cenário | Critério | Fonte |
 |---|---|---|---|
-| L-01 | Spike test da regra de frequência (Fase 3b) | p95 e p99 medidos. Se p99 ultrapassar o limite, avaliar Redis ou janela pré-agregada. | Risco R1; ADR 0001 (dec. 4) |
+| L-01 | Spike test da regra de frequência (Fase 3b) | p95 e p99 medidos com hardware documentado. Se p99 ultrapassar o limite, avaliar Redis ou janela pré-agregada. | Risco R1; ADR 0001 (dec. 4) |
 | L-02 | Capacidade por partição | Throughput por instância medido. Lag não cresce no pico. | Risco R2; `kafka-partitioning.md` §4 |
 | L-03 | Atraso do outbox | Idade do registro pendente mais antigo dentro do limite definido. | Risco R3; ADR 0003 |
 | L-04 | Partição quente | Mensagens e lag por partição sem desvio relevante. | Risco R4; `kafka-partitioning.md` §5 |
-| L-05 | Meta de latência | 500 ms medidos do recebimento da transação pelo Transaction Service até a publicação do alerta em `fraud-alerts`, no máximo, para transações que geram alerta. p95 e p99 são medidos para diagnóstico. | `project-overview.md` §3; ADR 0008 §2.8 |
+| L-05 | Meta de latência | 500 ms, em máximo absoluto, do recebimento da transação pelo Transaction Service até o término: publicação do alerta em `fraud-alerts` (MEDIUM ou HIGH) ou gravação da análise (LOW). Vale para todas as transações. | `project-overview.md` §3; ADR 0008 §4 |
 | L-07 | Monitoramento de lag e latência | Consumer lag por partição, latência de publicação e de consumo, e latência ponta a ponta disponíveis e com alertas configurados antes da Fase 5. | ADR 0008 §2.8; `architecture.md` §8 |
-| L-06 | Carga até o pico | Progressão até 25.000 TPS, em ambiente representativo com recursos documentados. | `implementation-plan.md` (critérios de conclusão) |
+| L-06 | Carga até o pico | Progressão até 25.000 TPS, com recursos de hardware documentados. Script em `load-tests/transactions.js`. | `implementation-plan.md` (critérios de conclusão) |
 
 Os critérios numéricos de L-01 a L-06 são definidos após o spike test. Não usar valores antecipados.
 
@@ -146,29 +146,29 @@ Esta seção registra o que já tem teste automatizado. Os itens sem teste estã
 | I-04 | Coberto | `TransactionApiIntegrationTest.sameKeyWithDifferentPayloadReturns422` |
 | I-05 | Coberto | `TransactionApiIntegrationTest.missingIdempotencyKeyReturns400` |
 | I-06 | Coberto (unitário) | `ReceiveTransactionServiceTest.expiredCompletedKeyIsTreatedAsNewRequest` |
-| I-07 | Pendente | Barreira do banco existe; sem teste de concorrência |
+| I-07 | Coberto | `TransactionApiIntegrationTest.concurrentIdenticalRequestsCreateExactlyOneTransaction` |
 | V-01 | Coberto | `TransactionApiIntegrationTest.unsupportedCurrencyReturns422` |
 | V-02 | Coberto | `TransactionApiIntegrationTest.invalidBodyReturns400WithoutInternalDetails` |
 | V-03 | Coberto | `TransactionApiIntegrationTest.invalidBodyReturns400WithoutInternalDetails` |
 | V-04 | Coberto | `TransactionApiIntegrationTest.invalidBodyReturns400WithoutInternalDetails` |
-| O-01 | Parcial | `ReceiveTransactionServiceTest.failureInSecondStepReleasesKeySoClientCanRetry` |
-| O-02 | Pendente | Kafka indisponível não testado |
-| O-03 | Pendente | Reentrega do publicador com mesmo `eventId` não testada diretamente |
+| O-01 | Coberto | `AtomicityIntegrationTest.outboxFailureRollsBackTransactionAndReleasesKey` |
+| O-02 | Coberto | `OutboxPublishingResilienceIntegrationTest.pendingEventIsRetriedWithSameEventIdAndMetricsAreRecorded` |
+| O-03 | Coberto | Mesmo teste acima: três envios com o mesmo `eventId` |
 | O-05 | Coberto | `TransactionApiIntegrationTest.publishesTransactionCreatedWithCustomerIdAsKey` |
 | C-01 | Coberto | `AnalyzeTransactionServiceTest.duplicateEventDoesNotRepeatAnalysisOrAlert`, e2e |
 | C-02 | Coberto | `AnalyzeTransactionServiceTest.alertPublishFailureIsRetriedWithSameAlertEventIdWithoutNewAnalysis` |
 | C-03 | Coberto | `FraudPipelineIntegrationTest.invalidPayloadGoesDirectlyToDeadLetterTopic` |
-| C-04 | Parcial | Retry e DLQ existem; o teste de falha transitória de banco não foi escrito |
-| C-05 | Pendente | Ordem de confirmação do offset não testada diretamente |
+| C-04 | Coberto | `ConsumerRetryIntegrationTest` (falha transitória recuperada e falha persistente em DLT) |
+| C-05 | Coberto | `ConsumerRetryIntegrationTest.transientDatabaseFailureIsRetriedAndOffsetIsCommittedAfterAnalysis` |
 | C-06 | Não aplicável | BR-03 não implementada |
 | N-01 | Coberto | `NotificationPipelineIntegrationTest.persistentProviderFailureEndsInFailedStatusAndDeadLetterTopic` |
-| N-02 | Pendente | Isolamento entre Fraud e Notification não testado diretamente |
+| N-02 | Coberto | e2e `notificationProviderOutageDoesNotBlockFraudAnalysisOrAlertRecording` |
 | N-03 | Coberto | `ProcessFraudAlertServiceTest` e `NotificationPipelineIntegrationTest` |
 | N-04 | Coberto | `ProcessFraudAlertServiceTest.redeliveryOfAcceptedAlertDoesNotSendAgain`, `NotificationPipelineIntegrationTest.redeliveredAlertIsNotSentTwice` |
-| L-01 | Pendente | Spike test escrito (`FrequencyRuleSpikeTest`), não executado em ambiente representativo |
+| L-01 | Pendente | Spike test escrito (`FrequencyRuleSpikeTest`), não executado com hardware documentado |
 | L-02 | Pendente | Carga por partição não medida |
 | L-03 | Pendente | Atraso do outbox não medido |
 | L-04 | Pendente | Partição quente não medida |
 | L-05 | Pendente | Só há latência informativa no e2e |
 | L-06 | Pendente | Carga até 25.000 TPS não executada |
-| L-07 | Pendente | Métricas de lag não expostas |
+| L-07 | Parcial | Lag exposto e testado (`FraudServiceSmokeTest.exposesKafkaConsumerLagMetrics`); latência de publicação e de consumo pendentes |

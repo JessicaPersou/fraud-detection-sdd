@@ -8,6 +8,9 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 
+import java.time.Duration;
+
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -31,6 +34,21 @@ class FraudServiceSmokeTest {
         registry.add("fraud.rules.amount.threshold-cents", () -> "100000");
         registry.add("fraud.rules.frequency.max-transactions", () -> "5");
         registry.add("fraud.rules.frequency.window", () -> "PT60S");
+    }
+
+    /**
+     * L-07: as métricas de consumer lag do cliente Kafka devem estar expostas no Actuator
+     * para o consumidor de transaction-events.
+     */
+    @Test
+    void exposesKafkaConsumerLagMetrics() {
+        Awaitility.await().atMost(Duration.ofSeconds(30)).pollInterval(Duration.ofMillis(500))
+                .untilAsserted(() -> {
+                    HttpResponse<String> response = HttpClient.newHttpClient().send(
+                            HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/actuator/metrics")).build(),
+                            HttpResponse.BodyHandlers.ofString());
+                    assertThat(response.body()).contains("kafka.consumer.fetch.manager.records.lag");
+                });
     }
 
     @Test

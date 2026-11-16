@@ -193,6 +193,26 @@ class AntifraudEndToEndTest {
         }
     }
 
+    /**
+     * N-02: indisponibilidade do provedor de notificação não interrompe a análise nem o registro do alerta.
+     */
+    @Test
+    void notificationProviderOutageDoesNotBlockFraudAnalysisOrAlertRecording() throws Exception {
+        SimulatedNotificationProvider provider = notificationService.getBean(SimulatedNotificationProvider.class);
+        provider.failNext(100);
+        try {
+            String transactionId = transactionId(post(customer(), 150_000));
+
+            assertThat(awaitValueEquals("SELECT alert_published FROM fraud_analysis WHERE transaction_id = ?",
+                    SharedInfrastructure.FRAUD_DB, transactionId, "1")).isEqualTo("1");
+            assertThat(count("SELECT COUNT(*) FROM notification_record WHERE transaction_id = ? "
+                            + "AND status = 'ACCEPTED_BY_PROVIDER'",
+                    SharedInfrastructure.NOTIFICATION_DB, transactionId)).isZero();
+        } finally {
+            provider.failNext(0);
+        }
+    }
+
     @Test
     void reportsEndToEndLatencyForInformation() throws Exception {
         int samples = 30;
