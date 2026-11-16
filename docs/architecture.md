@@ -99,7 +99,7 @@ Redis não será obrigatório na primeira versão. Será avaliado se métricas d
 
 O Transaction Service utiliza o padrão Transactional Outbox desde a primeira versão (ADR 0001, decisão 5). A transação e o evento `TransactionCreated` são gravados na mesma transação de banco; um publicador envia os registros pendentes ao Kafka reutilizando o `eventId` persistido.
 
-O mecanismo de publicação do outbox (polling ou CDC) ainda precisa ser confirmado (ADR 0001 §5). CDC não faz parte da primeira versão.
+A publicação do outbox é feita por polling com `SKIP LOCKED` (ADR 0003). CDC (Debezium) não faz parte da primeira versão e só será avaliado por gatilho medido.
 
 ## 8. Observabilidade
 
@@ -107,7 +107,9 @@ Monitorar, no mínimo:
 
 - Throughput de entrada e processamento.
 - Latência p50, p95 e p99.
-- Consumer lag por tópico/partição.
+- Consumer lag por consumer group e partição. É o sinal de capacidade dos consumidores.
+- Latência de publicação (do registro no outbox ao ack do Kafka) e de consumo (da publicação ao fim do processamento).
+- Latência ponta a ponta do recebimento da transação à publicação do alerta, com p50, p95 e p99 (meta de 500 ms, ADR 0008 §2.8).
 - Erros e retries.
 - Mensagens em DLQ.
 - Saúde dos bancos e provedores externos.

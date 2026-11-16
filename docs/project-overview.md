@@ -24,15 +24,17 @@ Desenvolver um motor capaz de analisar transações financeiras em tempo real, i
 |---|---:|
 | Volume médio | 8.000 TPS |
 | Volume de pico | 25.000 TPS |
-| Latência do motor | Até 500 ms |
+| Latência de geração do alerta | No máximo 500 ms, do recebimento da transação à publicação do alerta |
 | Escalabilidade | Horizontal |
 | Observabilidade | Logs, métricas e rastreamento |
 
 ### Definição provisória do SLA
 
-A medição de 500 ms começa quando o evento é consumido pelo Fraud Detection Service e termina quando o resultado da análise é publicado no Kafka.
+A medição de 500 ms começa quando o Transaction Service recebe a transação e termina quando o evento de alerta é publicado no tópico `fraud-alerts`. A meta vale para transações que geram alerta. A latência da análise sem alerta é medida à parte.
 
-A meta deve ser validada por testes de carga, incluindo p95 e p99. A entrega efetiva de notificações externas possui dependências próprias e não está coberta por essa definição inicial.
+A meta deve ser validada por testes de carga, incluindo p95 e p99.
+
+A entrega da notificação ao destinatário tem SLA próprio, condicionado ao processamento dos provedores externos, e não entra nessa meta.
 
 ## 4. Arquitetura
 
@@ -90,6 +92,7 @@ Os serviços comunicam-se assincronamente por Apache Kafka e seguem Arquitetura 
 - Limites definitivos das regras de fraude.
 - Precisão e janela temporal da regra de frequência.
 - Critérios de localização suspeita e disponibilidade dos dados geográficos.
-- Mecanismo de publicação do outbox (polling ou CDC). Consistência banco × Kafka resolvida pelo Transactional Outbox (ADR 0001).
+- Hospedagem de produção na AWS: ADR 0008 (EKS, RDS for MySQL e Confluent Cloud). Região: sa-east-1 (São Paulo). Confluent Dedicated com PrivateLink. Pendentes: sistema chamador com mTLS, validação do OIDC com o Confluent, limites e custo do Dedicated e residência de dados.
+- Consistência banco × Kafka resolvida pelo Transactional Outbox com publicação por polling (ADR 0001 e ADR 0003).
 - Provedor e SLA de notificação externa.
 - Requisitos de segurança, privacidade e LGPD.

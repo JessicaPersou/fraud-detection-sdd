@@ -1,6 +1,49 @@
 spring:
   application:
     name: fraud-service
+  datasource:
+    # Credenciais de desenvolvimento local (infrastructure/docker). Em outros ambientes, usar variáveis de ambiente.
+    url: ${FRAUD_DB_URL:jdbc:mysql://localhost:3306/fraud_db}
+    username: ${FRAUD_DB_USER:fraud_user}
+    password: ${FRAUD_DB_PASSWORD:fraud_dev}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    locations: classpath:db/migration/fraud
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    consumer:
+      enable-auto-commit: false          # ADR 0001, decisão 8
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+    listener:
+      ack-mode: record
+
+# Limites de negócio não têm padrão. Sem eles a aplicação não sobe (ADR 0001, decisão 10).
+# Valores são definidos pela área de negócio (business-rules.md, seção 6).
+fraud:
+  rules:
+    amount:
+      threshold-cents: ${FRAUD_AMOUNT_THRESHOLD_CENTS}          # BR-02
+    frequency:
+      max-transactions: ${FRAUD_FREQUENCY_MAX_TRANSACTIONS}     # BR-01
+      window: ${FRAUD_FREQUENCY_WINDOW}                         # BR-01, formato ISO-8601 (ex.: PT60S)
+  kafka:
+    transaction-topic: ${TRANSACTION_EVENTS_TOPIC:transaction-events}
+    alert-topic: ${FRAUD_ALERTS_TOPIC:fraud-alerts}
+    consumer-group: ${FRAUD_CONSUMER_GROUP:fraud-detection-service}   # ADR 0005
 
 server:
   port: ${SERVER_PORT:8082}
@@ -9,7 +52,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics
   endpoint:
     health:
       show-details: when-authorized

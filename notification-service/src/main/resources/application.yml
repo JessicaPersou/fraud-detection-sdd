@@ -1,6 +1,40 @@
 spring:
   application:
     name: notification-service
+  datasource:
+    # Credenciais de desenvolvimento local (infrastructure/docker). Em outros ambientes, usar variáveis de ambiente.
+    url: ${NOTIFICATION_DB_URL:jdbc:mysql://localhost:3306/notification_db}
+    username: ${NOTIFICATION_DB_USER:notification_user}
+    password: ${NOTIFICATION_DB_PASSWORD:notification_dev}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    locations: classpath:db/migration/notification
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    consumer:
+      enable-auto-commit: false          # ADR 0001, decisão 8
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    listener:
+      ack-mode: record
+
+# Canal e destinatário são de configuração e não têm padrão (ADR 0001, decisão 10).
+notification:
+  channel: ${NOTIFICATION_CHANNEL}
+  recipient: ${NOTIFICATION_RECIPIENT}
+  kafka:
+    alert-topic: ${FRAUD_ALERTS_TOPIC:fraud-alerts}
+    consumer-group: ${NOTIFICATION_CONSUMER_GROUP:notification-service}   # ADR 0005
 
 server:
   port: ${SERVER_PORT:8083}
@@ -9,7 +43,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics
   endpoint:
     health:
       show-details: when-authorized
