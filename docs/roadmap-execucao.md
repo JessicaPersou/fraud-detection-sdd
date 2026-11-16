@@ -16,6 +16,7 @@ Este documento organiza a resolução das pendências e a execução das fases d
 | Consumidores (grupos, DLQ, retry, inbox) | Parâmetros definidos, 12 partições como hipótese | ADR 0005 | Mais partições por evidência de spike |
 | Moeda e precisão | Somente BRL na v1, expoente ISO 4217 | ADR 0006 | Novas moedas mediante validação |
 | Stack e ferramentas | Java 21, Spring Boot 4.1.2, Maven, Kafka KRaft, MySQL 8.4 | ADR 0007 | Atualizações em PRs dedicados |
+| Hospedagem na AWS | EKS, RDS for MySQL 8.4 Multi-AZ, Confluent Cloud Dedicated com PrivateLink em produção, região `sa-east-1`, mTLS no ALB para o sistema chamador, OIDC do EKS para o Kafka | ADR 0008 | Pendências de validação no spike e na Fase 5 (seção 4) |
 
 ### Ainda dependem de validação de negócio
 
@@ -65,7 +66,121 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 
 ---
 
-## 3. Registro de riscos
+## 3. Fases 2 a 5 — implementadas
+
+**Status:** implementadas e cobertas por testes automatizados (`mvn verify`, 58 testes, todos passando). Os critérios que dependem de ambiente representativo (spike test, carga até 25.000 TPS, SLA de 500 ms) **não foram validados** e permanecem pendentes (seção 4).
+
+### 3.1 Fase 2 — Transaction Service
+
+**Entregue**
+
+- [x] `POST /transactions` com `Idempotency-Key`, validações de entrada e de domínio (ADR 0004).
+- [x] Idempotência em duas etapas: a chave é reservada como `IN_PROGRESS` em transação própria; a transação, o registro de outbox e a chave como `COMPLETED` são gravados juntos.
+- [x] Outbox com publicador por polling, `SKIP LOCKED`, lote de 500 e intervalo de 200 ms (ADR 0003). Produtor com `acks=all` e `enable.idempotence=true`. Chave Kafka `customerId`.
+- [x] Erros sem detalhes internos (spec §7).
+- [x] Testes: 16 unitários e 6 de integração com MySQL 8.4 e Kafka reais (Testcontainers), mais o smoke test.
+
+**Achados**
+
+- A chave `IN_PROGRESS` precisa ficar comprometida antes da transação de negócio. Caso contrário, uma reentrega concorrente não veria a reserva. Por isso são duas transações.
+- Com id atribuído, `merge` do JPA sobrescreveria uma chave existente. As entidades de inserção implementam `Persistable`.
+- Se a segunda etapa falha, a reserva é liberada para o cliente repetir. Se o processo cai no meio, a reserva fica `IN_PROGRESS` e expira pelo timeout configurado.
+
+**Pendente**
+
+- [ ] Comportamento com Kafka indisponível (O-02) e reentrega do publicador (O-03): sem teste automatizado.
+- [ ] Concorrência de requisições idênticas (I-07): a barreira do banco existe, mas sem teste de concorrência real.
+- [ ] Job de limpeza das tabelas `idempotency_key` e `outbox_event` (R5).
+
+### 3.2 Fase 3 — Fraud Detection Service
+
+**Entregue**
+
+- [x] 3a — BR-02 (valor) com fluxo ponta a ponta.
+- [x] 3b — BR-01 (frequência) em MySQL, com janela deslizante que inclui a transação atual (histórico em `transaction_history`, índice por cliente e instante).
+- [x] 3c — explicabilidade por regra (`ruleCode`, `description`, `reason`), inbox na mesma transação da análise, retry de 1 s, 2 s e 4 s, DLQ `transaction-events.DLT` e publicação de `FraudDetected` com `alertEventId` gerado uma vez.
+- [x] Classificação: nenhum sinal é LOW, um sinal é MEDIUM, dois ou mais é HIGH. Política provisória (`business-rules.md` §7).
+- [x] Testes: 13 unitários, 4 de integração com Kafka e MySQL reais e o smoke test.
+- [x] Spike test da BR-01 escrito (`FrequencyRuleSpikeTest`, tag `spike`, fora do build padrão).
+
+**Achados**
+
+- Reentrega de evento já analisado não repete a análise, mas reenvia o alerta se a publicação anterior falhou (cenário C-02). Por isso o estado `alert_published` fica na análise.
+- O alerta carrega `transactionId`, não o `eventId` de origem. Testes que buscam uma análise devem usar o `transactionId`.
+- Latência do alerta é medida em `fraud.alert.latency` (Micrometer), do `occurredAt` até a publicação.
+
+**Pendente**
+
+- [ ] **Spike test da BR-01 em ambiente representativo (R1).** O teste foi escrito e não foi executado. Rodar na máquina de desenvolvimento não valida nada: a decisão de manter MySQL ou migrar para Redis depende desse resultado.
+- [ ] BR-03 (localização) não implementada: o contrato `TransactionCreated` não traz localização. Ausência de dados nunca vira fraude.
+- [ ] Limites de BR-01 e BR-02 e a política de combinação de sinais aguardam validação de negócio.
+
+### 3.3 Fase 4 — Notification Service
+
+**Entregue**
+
+- [x] Consumidor de `fraud-alerts` com validação de contrato e DLQ `fraud-alerts.DLT`.
+- [x] Provedor simulado atrás da porta `NotificationProvider`, com falha controlável para testes.
+- [x] Estados distintos (N-03): `PENDING`, `ACCEPTED_BY_PROVIDER`, `FAILED`. `DELIVERED` está reservado.
+- [x] Reentrega de alerta já aceito não gera novo envio (N-04).
+- [x] Testes: 4 unitários, 5 de integração e o smoke test.
+
+**Achados**
+
+- `FAILED` aparece entre as tentativas de retry. Testes que aguardam o resultado final precisam esperar o status pedido, não o primeiro `FAILED`.
+- O destinatário é gravado para auditoria, mas não vai para log.
+
+**Pendente**
+
+- [ ] Provedor real e SLA de notificação externa (pendência de negócio).
+- [ ] Confirmação de entrega do provedor, necessária para o estado `DELIVERED`.
+- [ ] Circuit breaker para o provedor (R6).
+
+### 3.4 Fase 5 — Integração e validação
+
+**Entregue**
+
+- [x] Módulo `e2e-tests`: os três serviços sobem na mesma JVM, cada um com seu contexto e banco. Cenários cobertos: F-01, F-02, F-03, F-04, I-02, evento duplicado e indisponibilidade do provedor com retry (N-01 e N-04 em nível de fluxo).
+- [x] Latência HTTP até notificação aceita é reportada como informativa.
+
+**Achados**
+
+- Na mesma JVM, os três `application.yml` se sobrepõem no classpath. Cada contexto carrega o próprio arquivo pelo caminho.
+- As migrações Flyway ficam em pastas separadas por serviço, para evitar conflito de versão `V1`.
+- Os JARs dos serviços são empacotados com o classifier `exec`, para que o módulo e2e enxergue as classes.
+
+**Pendente**
+
+- [ ] Carga progressiva até 25.000 TPS (L-06). Não há script de carga.
+- [ ] Medição de lag por consumer group e partição (L-07): o código não expõe essas métricas ainda.
+- [ ] SLA de 500 ms em p95 e p99 e critério de máximo absoluto, medidos em ambiente representativo (L-05). A latência do e2e é só informativa.
+- [ ] Atraso do outbox (L-03) não medido.
+
+## 4. Próximas ações
+
+1. **Spike test da BR-01** em ambiente representativo: EKS, RDS, Confluent Dedicated com PrivateLink (ADR 0008, seção 2.6). Decide R1.
+2. **Validar o fluxo OIDC do EKS com o Confluent** no mesmo ambiente (ADR 0008, seção 2.3).
+3. **Alocar o orçamento de 500 ms por etapa**, incluindo o intervalo de polling do outbox de 200 ms, que pode consumir até 200 ms do orçamento (ADR 0008, seção 2.8).
+4. **Exportar métricas de lag e de latência** de publicação, consumo e ponta a ponta (L-07).
+5. **Carga progressiva** até 25.000 TPS, com pelo menos um script versionado (L-06).
+6. **Jobs de limpeza** de idempotência e inbox (R5).
+7. **Primeiro push e execução da CI remota** (critério 5 da Fase 1).
+8. **Validação de negócio** de BR-01, BR-02, BR-03, BR-04 e da política de classificação.
+
+## 5. Registro de riscos (estado atual)
+
+| Risco | Estado |
+|---|---|
+| R1 | Aberto. Depende do spike test em ambiente representativo. |
+| R2 | Aberto. 12 partições; o limite de réplicas úteis é o número de partições (ADR 0008, seção 2.7). |
+| R3 | Aberto. Intervalo de 200 ms; atraso não medido. |
+| R4 | Aberto. Não medido. |
+| R5 | Aberto. Limpeza não implementada. |
+| R6 | Aberto. Circuit breaker não implementado. |
+| R7 | Parcial. Limites vêm de configuração e a aplicação não sobe sem eles. Validação de configuração na inicialização não é formal. |
+
+## 6. Registro de riscos (definição original)
+
 
 Cada risco tem uma forma de medir e um gatilho de evolução. O objetivo é mostrar que o risco é conhecido e que a decisão tem critério.
 
@@ -81,16 +196,7 @@ Cada risco tem uma forma de medir e um gatilho de evolução. O objetivo é most
 
 ---
 
-## 4. Próximas fases
-
-- **Fase 2 — Transaction Service:** endpoint com `Idempotency-Key`, outbox, publicador com polling e testes de integração com Testcontainers (ADR 0003, ADR 0004).
-- **Fase 3 — Fraud Detection:** 3a BR-02; 3b BR-01 com spike test (R1, R2); 3c explicabilidade, inbox, retry e DLQ (ADR 0005).
-- **Fase 4 — Notification:** provedor simulado, status de envio e DLQ (ADR 0002).
-- **Fase 5 — Integração e carga:** duplicatas, falhas de provedor, testes progressivos até 25.000 TPS e revisão dos riscos R1 a R7 com métricas reais.
-
----
-
-## 5. O que não resolvemos agora
+## 7. O que não resolvemos agora
 
 Deliberadamente fora do escopo inicial, com justificativa:
 

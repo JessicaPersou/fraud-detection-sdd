@@ -1,6 +1,37 @@
 spring:
   application:
     name: transaction-service
+  datasource:
+    # Credenciais de desenvolvimento local (infrastructure/docker). Em outros ambientes, usar variáveis de ambiente.
+    url: ${TRANSACTION_DB_URL:jdbc:mysql://localhost:3306/transaction_db}
+    username: ${TRANSACTION_DB_USER:transaction_user}
+    password: ${TRANSACTION_DB_PASSWORD:transaction_dev}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    locations: classpath:db/migration/transaction
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
+    producer:
+      acks: all
+      properties:
+        enable.idempotence: true
+
+# Valores de negócio não têm padrão. Parâmetros operacionais têm padrão documentado no README.
+transaction:
+  supported-currencies: ${SUPPORTED_CURRENCIES:BRL}   # ADR 0006: somente BRL na v1
+  idempotency:
+    in-progress-timeout: ${IDEMPOTENCY_IN_PROGRESS_TIMEOUT:PT5M}
+  outbox:
+    poll-interval-ms: ${OUTBOX_POLL_INTERVAL_MS:200}  # ADR 0003
+    batch-size: ${OUTBOX_BATCH_SIZE:500}              # ADR 0003
+    topic: ${TRANSACTION_EVENTS_TOPIC:transaction-events}
 
 server:
   port: ${SERVER_PORT:8081}

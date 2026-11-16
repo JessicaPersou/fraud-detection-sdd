@@ -73,3 +73,12 @@ Cada regra acionada explica o motivo do acionamento (`business-rules.md` §5; AD
 ## 5. Evolução dos contratos
 
 Mudanças devem considerar compatibilidade dos consumidores. Campos novos opcionais são preferíveis a alterações incompatíveis. Mudanças breaking devem ser versionadas e coordenadas.
+
+## 6. Semântica implementada (Fase 2 e 3)
+
+- **`occurredAt` em `TransactionCreated`:** é o instante em que o Transaction Service recebeu e registrou a transação. É a origem da medição do SLA de 500 ms (ADR 0008, seção 2.8).
+- **`FraudDetected` é publicado somente para MEDIUM e HIGH.** Transações LOW são analisadas e persistidas, sem alerta.
+- **`alertEventId`:** o `eventId` do `FraudDetected` é gerado uma vez, na análise, e persistido. Reenvios do alerta usam o mesmo `eventId`.
+- **Chave Kafka:** `customerId` nos dois tópicos.
+- **`riskLevel`:** string `LOW`, `MEDIUM` ou `HIGH`, conforme `business-rules.md` §7.
+- **Deduplicação:** o consumidor de `transaction-events` deduplica por `eventId` na inbox. O consumidor de `fraud-alerts` deduplica pelo `eventId` na tabela de notificações.

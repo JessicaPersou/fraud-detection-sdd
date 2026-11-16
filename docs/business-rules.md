@@ -65,3 +65,13 @@ Cada análise deverá registrar:
 - Distância mínima e intervalo temporal para localização.
 - Severidade e combinação das regras.
 - Dados necessários e sua origem.
+
+## 7. Implementação atual (Fase 3)
+
+Esta seção descreve o que o código faz hoje. Não é validação de negócio: os valores e a política continuam provisórios até a aprovação da área de negócio.
+
+- **BR-02 (valor):** a regra aciona quando `amountInCents` é maior que `fraud.rules.amount.threshold-cents`. O limite não tem padrão no código.
+- **BR-01 (frequência):** conta as transações do cliente em uma janela deslizante que termina no `occurredAt` do evento, com os dois extremos incluídos. A transação atual entra na contagem. A regra aciona quando a contagem é maior que `fraud.rules.frequency.max-transactions`. A janela vem de `fraud.rules.frequency.window` (ISO-8601).
+- **BR-03 (localização):** não implementada. O contrato `TransactionCreated` não traz dados de localização, e a ausência de dados nunca vira fraude.
+- **BR-04 (combinação):** política provisória. Nenhum sinal é LOW; um sinal é MEDIUM; dois ou mais sinais são HIGH. Os pesos ainda não existem.
+- **Eventos fora de ordem:** a janela é calculada pelo `occurredAt` do evento, não pela hora de chegada. Consumidores de uma mesma partição processam em ordem, mas a janela pode incluir transações que chegaram depois, se o produtor atrasar.

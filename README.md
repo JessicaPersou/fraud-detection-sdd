@@ -10,7 +10,8 @@ Documentação inicial do projeto de detecção de transações suspeitas em tem
 - `docs/event-contracts.md`: contratos dos eventos Kafka.
 - `docs/kafka-partitioning.md`: estratégia inicial de particionamento.
 - `docs/implementation-plan.md`: sequência de implementação.
-- `docs/adr/`: decisões arquiteturais registradas (ADR 0001: decisões iniciais).
+- `docs/adr/`: decisões arquiteturais registradas (ADRs 0001 a 0008 aceitas; ADR 0008, arquitetura AWS, com pendências do spike test).
+- `docs/cenarios-teste.md`: cenários de teste do caminho feliz e das bordas.
 - `specs/transaction-service/specification.md`: especificação do serviço de transações.
 - `specs/fraud-detection-service/specification.md`: especificação do motor antifraude.
 - `specs/notification-service/specification.md`: especificação do serviço de notificações.
@@ -50,9 +51,36 @@ Cada serviço expõe o health check em `/actuator/health`.
 | Fraud Detection Service | 8082 | `java -jar fraud-service/target/fraud-service-0.1.0-SNAPSHOT.jar` |
 | Notification Service | 8083 | `java -jar notification-service/target/notification-service-0.1.0-SNAPSHOT.jar` |
 
-Para trocar a porta, defina `SERVER_PORT`. Exemplo: `SERVER_PORT=8091`.
+#### Variáveis obrigatórias
 
-> **Conflito de porta conhecido:** outros stacks locais (ex.: Confluent Schema Registry) também usam 8081. Se o Transaction Service falhar com "Port 8081 was already in use", use `SERVER_PORT` para mudar a porta.
+Limites de negócio e destinatário não têm valor padrão no código (ADR 0001, decisão 10). Sem eles, Fraud Detection e Notification não sobem:
+
+| Variável | Serviço | Uso |
+|---|---|---|
+| `FRAUD_AMOUNT_THRESHOLD_CENTS` | Fraud | Limite de valor, em centavos (BR-02) |
+| `FRAUD_FREQUENCY_MAX_TRANSACTIONS` | Fraud | Quantidade máxima na janela (BR-01) |
+| `FRAUD_FREQUENCY_WINDOW` | Fraud | Janela, em ISO-8601 (ex.: `PT60S`) |
+| `NOTIFICATION_CHANNEL` | Notification | Canal de envio (ex.: `EMAIL`) |
+| `NOTIFICATION_RECIPIENT` | Notification | Destinatário |
+
+Os valores ainda aguardam validação de negócio (`docs/business-rules.md`, seção 6). Para testes locais, use valores explícitos e marcados como de teste. Os demais parâmetros têm padrão em `application.yml`.
+
+Exemplo:
+
+```bash
+FRAUD_AMOUNT_THRESHOLD_CENTS=100000 FRAUD_FREQUENCY_MAX_TRANSACTIONS=5 FRAUD_FREQUENCY_WINDOW=PT60S \
+NOTIFICATION_CHANNEL=EMAIL NOTIFICATION_RECIPIENT=ops-test@example.invalid \
+java -jar fraud-service/target/fraud-service-0.1.0-SNAPSHOT.jar
+```
+
+### 4. Testes
+
+```bash
+mvn verify                 # unitários e integração (exige Docker: Testcontainers com MySQL 8.4 e Kafka)
+mvn -pl fraud-service -Dgroups=spike test   # spike test da regra BR-01 (Fase 3b), fora do build padrão
+```
+
+O módulo `e2e-tests` sobe os três serviços na mesma JVM e valida o fluxo completo (Fase 5). A latência reportada por ele é informativa e não valida o SLA de 500 ms.
 
 ### Decisões de referência
 
