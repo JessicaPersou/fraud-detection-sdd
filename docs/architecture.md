@@ -110,6 +110,7 @@ Monitorar, no mínimo:
 - Consumer lag por consumer group e partição. É o sinal de capacidade dos consumidores.
 - Latência de publicação (do registro no outbox ao ack do Kafka) e de consumo (da publicação ao fim do processamento).
 - Latência ponta a ponta do recebimento da transação à publicação do alerta, com p50, p95 e p99 (meta de 500 ms, ADR 0008 §2.8).
+- Trace ponta a ponta com o mesmo traceId, incluindo o publicador do outbox (ADR 0010).
 - Erros e retries.
 - Mensagens em DLQ.
 - Saúde dos bancos e provedores externos.

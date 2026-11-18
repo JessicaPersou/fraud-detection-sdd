@@ -10,6 +10,7 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.listener.CommonErrorHandler;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.util.backoff.ExponentialBackOff;
 
 import com.persou.antifraud.fraud.application.port.in.AnalyzeTransactionUseCase;
@@ -23,6 +24,7 @@ import com.persou.antifraud.fraud.domain.exception.InvalidEventException;
 import com.persou.antifraud.fraud.domain.service.FraudRuleEvaluator;
 
 @Configuration
+@EnableScheduling
 @ConfigurationPropertiesScan
 class FraudServiceConfig {
 

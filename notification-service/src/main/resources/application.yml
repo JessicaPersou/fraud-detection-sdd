@@ -1,6 +1,9 @@
 spring:
   application:
     name: notification-service
+  mail:
+    host: ${MAILPIT_HOST:localhost}      # servidor SMTP de teste (docker-compose)
+    port: ${MAILPIT_SMTP_PORT:1025}
   datasource:
     # Credenciais de desenvolvimento local (infrastructure/docker). Em outros ambientes, usar variáveis de ambiente.
     url: ${NOTIFICATION_DB_URL:jdbc:mysql://localhost:3306/notification_db}
@@ -17,6 +20,8 @@ spring:
   flyway:
     locations: classpath:db/migration/notification
   kafka:
+    template:
+      observation-enabled: true   # propaga traceId nos cabeçalhos das mensagens (ADR 0010)
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:29092}
     consumer:
       enable-auto-commit: false          # ADR 0001, decisão 8
@@ -27,11 +32,15 @@ spring:
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
     listener:
       ack-mode: record
+      observation-enabled: true
 
 # Canal e destinatário são de configuração e não têm padrão (ADR 0001, decisão 10).
 notification:
   channel: ${NOTIFICATION_CHANNEL}
   recipient: ${NOTIFICATION_RECIPIENT}
+  provider: ${NOTIFICATION_PROVIDER:simulated}   # simulated | smtp (ADR 0010)
+  mail:
+    from: ${NOTIFICATION_MAIL_FROM:alertas@antifraude.example.invalid}
   kafka:
     alert-topic: ${FRAUD_ALERTS_TOPIC:fraud-alerts}
     consumer-group: ${NOTIFICATION_CONSUMER_GROUP:notification-service}   # ADR 0005
@@ -40,6 +49,9 @@ server:
   port: ${SERVER_PORT:8083}
 
 management:
+  tracing:
+    sampling:
+      probability: 1.0   # demonstração: todas as transações geram spans (ADR 0010)
   endpoints:
     web:
       exposure:

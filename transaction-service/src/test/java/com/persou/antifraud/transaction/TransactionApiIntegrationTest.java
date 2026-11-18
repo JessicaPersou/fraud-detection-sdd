@@ -8,7 +8,11 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.regex.Matcher;
@@ -20,7 +24,9 @@ import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -41,6 +47,9 @@ class TransactionApiIntegrationTest {
     private int port;
 
     private final HttpClient http = HttpClient.newHttpClient();
+
+    @Autowired
+    private JdbcTemplate jdbc;
 
     @DynamicPropertySource
     static void properties(DynamicPropertyRegistry registry) {
@@ -121,6 +130,40 @@ class TransactionApiIntegrationTest {
         HttpResponse<String> response = post(UUID.randomUUID().toString(), body("usd", 150_000, "USD"));
 
         assertThat(response.statusCode()).isEqualTo(422);
+    }
+
+    /**
+     * I-07: requisições idênticas e simultâneas. Exatamente uma cria a transação;
+     * as demais recebem 200 com a mesma resposta ou 409, e nunca criam outra transação.
+     */
+    @Test
+    void concurrentIdenticalRequestsCreateExactlyOneTransaction() throws Exception {
+        String key = UUID.randomUUID().toString();
+        String customer = "race-" + key;
+        String body = body(customer, 150_000, "BRL");
+        ExecutorService pool = Executors.newFixedThreadPool(10);
+        List<HttpResponse<String>> responses = new ArrayList<>();
+        try {
+            List<Future<HttpResponse<String>>> futures = new ArrayList<>();
+            for (int i = 0; i < 10; i++) {
+                futures.add(pool.submit(() -> post(key, body)));
+            }
+            for (Future<HttpResponse<String>> future : futures) {
+                responses.add(future.get(60, SECONDS));
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
+        List<Integer> codes = responses.stream().map(HttpResponse::statusCode).toList();
+        assertThat(codes.stream().filter(c -> c == 201).count()).isEqualTo(1);
+        assertThat(codes).allMatch(c -> c == 201 || c == 200 || c == 409);
+        String created = responses.stream().filter(r -> r.statusCode() == 201).findFirst().orElseThrow().body();
+        responses.stream().filter(r -> r.statusCode() == 200)
+                .forEach(r -> assertThat(r.body()).isEqualTo(created));
+        Integer rows = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM transaction_record WHERE customer_id = ?", Integer.class, customer);
+        assertThat(rows).isEqualTo(1);
     }
 
     private HttpResponse<String> post(String key, String body) throws Exception {

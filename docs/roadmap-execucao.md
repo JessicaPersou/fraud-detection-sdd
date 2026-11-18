@@ -16,7 +16,7 @@ Este documento organiza a resolução das pendências e a execução das fases d
 | Consumidores (grupos, DLQ, retry, inbox) | Parâmetros definidos, 12 partições como hipótese | ADR 0005 | Mais partições por evidência de spike |
 | Moeda e precisão | Somente BRL na v1, expoente ISO 4217 | ADR 0006 | Novas moedas mediante validação |
 | Stack e ferramentas | Java 21, Spring Boot 4.1.2, Maven, Kafka KRaft, MySQL 8.4 | ADR 0007 | Atualizações em PRs dedicados |
-| Hospedagem na AWS | EKS, RDS for MySQL 8.4 Multi-AZ, Confluent Cloud Dedicated com PrivateLink em produção, região `sa-east-1`, mTLS no ALB para o sistema chamador, OIDC do EKS para o Kafka | ADR 0008 | Pendências de validação no spike e na Fase 5 (seção 4) |
+| Arquitetura alvo na AWS | Justificativa das decisões de arquitetura (EKS, RDS for MySQL, Confluent Cloud, IAM, região `sa-east-1`). A execução do projeto é local e na CI do GitHub | ADR 0008 | Justificativa completa; capacidade medida com hardware documentado |
 
 ### Ainda dependem de validação de negócio
 
@@ -68,7 +68,7 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 
 ## 3. Fases 2 a 5 — implementadas
 
-**Status:** implementadas e cobertas por testes automatizados (`mvn verify`, 58 testes, todos passando). Os critérios que dependem de ambiente representativo (spike test, carga até 25.000 TPS, SLA de 500 ms) **não foram validados** e permanecem pendentes (seção 4).
+**Status:** implementadas e cobertas por testes automatizados (`mvn verify`, 68 testes, todos passando). Os critérios de capacidade (spike test, carga até 25.000 TPS e SLA de 500 ms) **não foram validados** com hardware documentado e permanecem pendentes (seção 4).
 
 ### 3.1 Fase 2 — Transaction Service
 
@@ -78,7 +78,7 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 - [x] Idempotência em duas etapas: a chave é reservada como `IN_PROGRESS` em transação própria; a transação, o registro de outbox e a chave como `COMPLETED` são gravados juntos.
 - [x] Outbox com publicador por polling, `SKIP LOCKED`, lote de 500 e intervalo de 200 ms (ADR 0003). Produtor com `acks=all` e `enable.idempotence=true`. Chave Kafka `customerId`.
 - [x] Erros sem detalhes internos (spec §7).
-- [x] Testes: 16 unitários e 6 de integração com MySQL 8.4 e Kafka reais (Testcontainers), mais o smoke test.
+- [x] Testes: 16 unitários e 10 de integração com MySQL 8.4 e Kafka reais (Testcontainers), incluindo concorrência (I-07), atomicidade (O-01), falhas do Kafka (O-02, O-03) e retenção (R5), mais o smoke test.
 
 **Achados**
 
@@ -89,8 +89,8 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 **Pendente**
 
 - [ ] Comportamento com Kafka indisponível (O-02) e reentrega do publicador (O-03): sem teste automatizado.
-- [ ] Concorrência de requisições idênticas (I-07): a barreira do banco existe, mas sem teste de concorrência real.
-- [ ] Job de limpeza das tabelas `idempotency_key` e `outbox_event` (R5).
+- [x] Concorrência de requisições idênticas (I-07): teste com 10 requisições simultâneas, uma transação criada.
+- [x] Job de retenção: chaves expiradas e outbox publicado há mais de 7 dias (R5, ADR 0009). Pendentes nunca são removidos.
 
 ### 3.2 Fase 3 — Fraud Detection Service
 
@@ -111,7 +111,7 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 
 **Pendente**
 
-- [ ] **Spike test da BR-01 em ambiente representativo (R1).** O teste foi escrito e não foi executado. Rodar na máquina de desenvolvimento não valida nada: a decisão de manter MySQL ou migrar para Redis depende desse resultado.
+- [ ] **Spike test da BR-01 com hardware documentado (R1).** O teste foi escrito e não foi executado. A decisão de manter MySQL ou migrar para Redis depende desse resultado.
 - [ ] BR-03 (localização) não implementada: o contrato `TransactionCreated` não traz localização. Ausência de dados nunca vira fraude.
 - [ ] Limites de BR-01 e BR-02 e a política de combinação de sinais aguardam validação de negócio.
 
@@ -123,7 +123,8 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 - [x] Provedor simulado atrás da porta `NotificationProvider`, com falha controlável para testes.
 - [x] Estados distintos (N-03): `PENDING`, `ACCEPTED_BY_PROVIDER`, `FAILED`. `DELIVERED` está reservado.
 - [x] Reentrega de alerta já aceito não gera novo envio (N-04).
-- [x] Testes: 4 unitários, 5 de integração e o smoke test.
+- [x] Canal de e-mail por SMTP com Mailpit, ativado por `NOTIFICATION_PROVIDER=smtp` (ADR 0010).
+- [x] Testes: 6 unitários (incluindo o adaptador SMTP), 5 de integração e o smoke test.
 
 **Achados**
 
@@ -133,37 +134,39 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 **Pendente**
 
 - [ ] Provedor real e SLA de notificação externa (pendência de negócio).
-- [ ] Confirmação de entrega do provedor, necessária para o estado `DELIVERED`.
-- [ ] Circuit breaker para o provedor (R6).
+- `DELIVERED` fora do escopo: exige confirmação do provedor. O canal de demonstração é o Mailpit (ADR 0010).
+- [x] Circuit breaker (R6): decidido não entrar na v1, com gatilho de revisão no ADR 0009, seção 2.2.
 
 ### 3.4 Fase 5 — Integração e validação
 
 **Entregue**
 
-- [x] Módulo `e2e-tests`: os três serviços sobem na mesma JVM, cada um com seu contexto e banco. Cenários cobertos: F-01, F-02, F-03, F-04, I-02, evento duplicado e indisponibilidade do provedor com retry (N-01 e N-04 em nível de fluxo).
+- [x] Módulo `e2e-tests` (8 cenários): os três serviços sobem na mesma JVM, cada um com seu contexto e banco. Cenários cobertos: F-01, F-02, F-03, F-04, I-02, evento duplicado e indisponibilidade do provedor com retry (N-01 e N-04 em nível de fluxo).
 - [x] Latência HTTP até notificação aceita é reportada como informativa.
+- [x] Observabilidade: spans no console de cada serviço com o mesmo traceId desde a requisição até os consumidores. O traceparent é gravado no outbox para atravessar a publicação assíncrona (ADR 0010).
 
 **Achados**
 
 - Na mesma JVM, os três `application.yml` se sobrepõem no classpath. Cada contexto carrega o próprio arquivo pelo caminho.
 - As migrações Flyway ficam em pastas separadas por serviço, para evitar conflito de versão `V1`.
 - Os JARs dos serviços são empacotados com o classifier `exec`, para que o módulo e2e enxergue as classes.
+- O contexto de trace precisa ser gravado no outbox. O publicador roda em tarefa agendada e abriria um trace novo, perdendo a ligação com a requisição HTTP.
 
 **Pendente**
 
-- [ ] Carga progressiva até 25.000 TPS (L-06). Não há script de carga.
+- [~] Carga progressiva até 25.000 TPS (L-06). Script versionado em `load-tests/transactions.js`; execução com hardware documentado pendente.
 - [ ] Medição de lag por consumer group e partição (L-07): o código não expõe essas métricas ainda.
-- [ ] SLA de 500 ms em p95 e p99 e critério de máximo absoluto, medidos em ambiente representativo (L-05). A latência do e2e é só informativa.
+- [ ] SLA de 500 ms como máximo absoluto para todas as transações, medido com hardware documentado (L-05). A latência do e2e é só informativa.
 - [ ] Atraso do outbox (L-03) não medido.
 
 ## 4. Próximas ações
 
-1. **Spike test da BR-01** em ambiente representativo: EKS, RDS, Confluent Dedicated com PrivateLink (ADR 0008, seção 2.6). Decide R1.
-2. **Validar o fluxo OIDC do EKS com o Confluent** no mesmo ambiente (ADR 0008, seção 2.3).
-3. **Alocar o orçamento de 500 ms por etapa**, incluindo o intervalo de polling do outbox de 200 ms, que pode consumir até 200 ms do orçamento (ADR 0008, seção 2.8).
-4. **Exportar métricas de lag e de latência** de publicação, consumo e ponta a ponta (L-07).
-5. **Carga progressiva** até 25.000 TPS, com pelo menos um script versionado (L-06).
-6. **Jobs de limpeza** de idempotência e inbox (R5).
+1. **Spike test da BR-01** com hardware documentado (R1). Decide manter MySQL ou evoluir para Redis ou janela pré-agregada.
+2. **OIDC do EKS com o Confluent**: somente análise (ADR 0008, seção 2.3).
+3. **Orçamento de 500 ms por etapa**: análise, incluindo o intervalo de polling do outbox de 200 ms, que pode consumir até 200 ms (ADR 0008, seção 2.8).
+4. **Métricas de latência de publicação e de consumo** do outbox e do consumidor (L-07). O lag já está exposto e verificado pelo teste `exposesKafkaConsumerLagMetrics`.
+5. **Carga progressiva** até 25.000 TPS com hardware documentado (L-06).
+6. ~~Jobs de limpeza de idempotência e inbox (R5)~~: feito (ADR 0009, seção 2.1).
 7. **Primeiro push e execução da CI remota** (critério 5 da Fase 1).
 8. **Validação de negócio** de BR-01, BR-02, BR-03, BR-04 e da política de classificação.
 
@@ -171,12 +174,12 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 
 | Risco | Estado |
 |---|---|
-| R1 | Aberto. Depende do spike test em ambiente representativo. |
+| R1 | Aberto. Depende do spike test com hardware documentado. |
 | R2 | Aberto. 12 partições; o limite de réplicas úteis é o número de partições (ADR 0008, seção 2.7). |
 | R3 | Aberto. Intervalo de 200 ms; atraso não medido. |
 | R4 | Aberto. Não medido. |
-| R5 | Aberto. Limpeza não implementada. |
-| R6 | Aberto. Circuit breaker não implementado. |
+| R5 | Mitigado. Limpeza implementada (ADR 0009). Falta medir o crescimento sob carga. |
+| R6 | Aceito na v1 (ADR 0009, seção 2.2). Gatilho de revisão definido. |
 | R7 | Parcial. Limites vêm de configuração e a aplicação não sobe sem eles. Validação de configuração na inicialização não é formal. |
 
 ## 6. Registro de riscos (definição original)

@@ -32,6 +32,7 @@
 
 - Implementar Kafka Consumer.
 - Implementar adaptador de notificação, inicialmente com provedor simulado (*fake provider*).
+- Canal de demonstração por SMTP com Mailpit, ativado por configuração (ADR 0010).
 - Registrar status.
 - Implementar retry e DLQ.
 - Criar testes.
@@ -49,7 +50,7 @@
 
 O fluxo deverá receber uma transação, analisar suas características, identificar condições suspeitas, persistir o resultado e disponibilizar o alerta ao serviço de notificações.
 
-A meta de 25.000 TPS e latência de 500 ms só será considerada validada após testes em ambiente representativo, com recursos e configuração documentados.
+A meta de 25.000 TPS e a latência de 500 ms só são afirmadas após testes de carga com recursos de hardware e configuração documentados (ver ADR 0008, seção 5).
 
 ## Uso de IA no desenvolvimento
 
@@ -65,3 +66,17 @@ Para cada etapa:
 6. Atualizar a documentação quando houver mudança aprovada.
 
 A IA não deve inventar regras de negócio ou resolver pendências sem validação humana.
+
+## Status final das fases
+
+| Fase | Estado | Evidência |
+|---|---|---|
+| 1 — Fundação | Concluída | Monorepo, Compose, CI no GitHub verde |
+| 2 — Transaction Service | Concluída | 27 testes; idempotência, outbox, atomicidade, Kafka indisponível |
+| 3 — Fraud Detection | Concluída | BR-02, BR-01, inbox, retry, DLQ, offset; spike escrito e fora do build padrão |
+| 4 — Notification | Concluída | Provedor simulado e Mailpit (ADR 0010); estados e reentrega |
+| 5 — Integração | Concluída | e2e com 8 cenários; carga como estratégia documentada (roteiro, seção 14) |
+
+**Escopo de demonstração.** Os limites de regra são valores de demonstração, aprovados para o case. A meta de capacidade (25.000 TPS) e o SLA de 500 ms como máximo absoluto para todas as transações são definidos e justificados (ADR 0008), com medição local como referência.
+
+**Fora do escopo do case:** BR-03 (localização), provedor de notificação real, canal de alerta operacional, `DELIVERED`, circuit breaker, CDC e Redis (gatilhos documentados no ADR 0009 e no ADR 0003).

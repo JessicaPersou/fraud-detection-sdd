@@ -1,188 +1,168 @@
-# ADR 0008 — Arquitetura de hospedagem na AWS
+# ADR 0008 — Arquitetura alvo na AWS: decisões e justificativas
 
-**Status:** Aceita (2026-11-15). As pendências da seção 5 são resolvidas no spike e na Fase 5.  
-**Data:** 2026-11-15  
-**Relaciona-se com:** ADR 0001, ADR 0003, ADR 0005, ADR 0007, `docs/architecture.md`, `docs/roadmap-execucao.md` (R1 a R4)
+**Status:** Aceita  
+**Data:** 2026-11-15 (revisado em 2026-11-16)  
+**Relaciona-se com:** ADR 0001, ADR 0003, ADR 0004, ADR 0005, ADR 0007, ADR 0009, `docs/architecture.md`
 
-## 1. Contexto
+## 1. Contexto e escopo
 
-O sistema será hospedado na AWS, com Kafka gerenciado pelo Confluent Cloud. Os documentos atuais definem a topologia lógica (três microsserviços, Kafka e MySQL), mas não a infraestrutura de produção. `architecture.md` §9 exige segurança em trânsito e em repouso, e `project-overview.md` exige escala horizontal até 25.000 TPS.
+O sistema precisa atender a requisitos de volume e latência, e a arquitetura alvo foi desenhada para isso na AWS. Este ADR justifica cada escolha: o que foi escolhido, o que foi descartado e por quê, e qual é o custo de cada decisão.
 
-Premissas desta revisão:
+**Escopo deste documento:** arquitetura alvo e raciocínio de decisão. A execução e a verificação do projeto acontecem localmente (Docker Compose) e no GitHub (CI com Testcontainers). Este ADR não descreve passos de implantação.
 
-- **Computação:** Amazon EKS.
-- **Banco:** Amazon RDS for MySQL 8.4.
-- **Kafka:** Confluent Cloud Dedicated, fora da AWS, conectado por AWS PrivateLink.
-- **Volume e latência:** volume médio de 8.000 transações por segundo, com picos de até 25.000 TPS. O sistema gera alertas em no máximo 500 ms após o recebimento da transação. A entrega da notificação ao destinatário tem SLA próprio, condicionado aos provedores externos, e não entra nessa meta.
-- **Autenticação do cliente:** o cliente final já está autenticado quando envia a transação. O sistema não faz login de usuário final; recebe uma requisição já autenticada upstream (seção 2.3).
-- **IAM:** usado para a comunicação entre os serviços da AWS (pods, RDS, Secrets Manager, KMS, ECR, CloudWatch). O Confluent Cloud não aceita autenticação por IAM/SigV4 no protocolo Kafka; ver seção 2.3.
+### 1.1 Requisitos que orientam as decisões
 
-Os números de capacidade não são definidos aqui: são validados pelo spike test (Fase 3b) e pela carga progressiva (Fase 5).
+| Requisito | Valor | Origem |
+|---|---|---|
+| Volume médio | 8.000 transações por segundo | `project-overview.md` |
+| Pico | 25.000 transações por segundo | `project-overview.md` |
+| Latência | Término do processamento em no máximo 500 ms após o recebimento, para todas as transações (máximo absoluto). Para transações com alerta, o término é a publicação do alerta; para as LOW, a gravação da análise | `project-overview.md` §3 |
+| Autenticação do cliente final | Já feita pelo sistema chamador antes do envio | Premissa do projeto |
+| Autenticação entre serviços AWS | IAM, sem chaves de longa duração | Premissa do projeto |
+| Região | `sa-east-1` (São Paulo), por residência de dados e latência para o público-alvo | Decisão do time |
 
-**Escopo:** este é um estudo de caso. O documento discute os principais pontos da arquitetura e as alternativas tecnológicas, sem chegar a uma solução completa pronta para produção. Runbooks, recuperação de desastres entre regiões, políticas detalhadas de backup e hardening completo ficam fora deste ADR.
-
-## 2. Proposta
-
-### 2.1 Topologia
+## 2. Topologia alvo
 
 ```text
-Sistemas internos (já autenticados upstream)
-   │  HTTPS + Idempotency-Key
+Sistemas internos (já autenticados)
+   │  HTTPS, mTLS, Idempotency-Key
    ▼
-AWS WAF ──► Application Load Balancer (subnets públicas, 3 AZs)
+AWS WAF ──► Application Load Balancer (3 AZs)
                 │
-   ┌────────────┴──────────── VPC (3 AZs) ──────────────────────────────┐
-   │  Subnets privadas: cluster EKS (node groups gerenciados ou Karpenter)│
-   │    • transaction-service  (API + publicador do outbox)              │
-   │    • fraud-service        (consumidor transaction-events)           │
-   │    • notification-service (consumidor fraud-alerts)                 │
-   │    • KEDA (autoscaling por lag do consumer group)                   │
-   │                                                                     │
-   │  Subnets isoladas (sem rota para internet)                          │
-   │    • RDS MySQL 8.4 Multi-AZ + RDS Proxy: transaction_db,            │
-   │      fraud_db, notification_db                                      │
-   │                                                                     │
-   │  PrivateLink ──► Confluent Cloud Dedicated (TLS, sem NAT)         │
-   │                  seção 2.4)                   │
-   │  NAT Gateway ──► provedor de notificação externo (egress)           │
-   └─────────────────────────────────────────────────────────────────────┘
-                  │
-                  ▼
-   Confluent Cloud (mesma região AWS): transaction-events, fraud-alerts, *.DLT
+   ┌────────────┴────────── VPC (3 AZs) ───────────────────────────────┐
+   │  Subnets privadas: EKS                                             │
+   │    • transaction-service  (API + publicador do outbox)             │
+   │    • fraud-service        (consumidor transaction-events)          │
+   │    • notification-service (consumidor fraud-alerts)                │
+   │    • KEDA (autoscaling pelo lag do consumer group)                 │
+   │                                                                    │
+   │  Subnets isoladas: RDS for MySQL 8.4 Multi-AZ + RDS Proxy          │
+   │    • transaction_db, fraud_db, notification_db                     │
+   │                                                                    │
+   │  VPC PrivateLink ──► Confluent Cloud (Kafka)                       │
+   │  NAT Gateway ──► provedor de notificação (saída controlada)        │
+   └────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 Componentes
+## 3. Decisões e justificativas
 
-| Camada | Escolha | Alternativa considerada | Motivo |
+Cada linha responde três perguntas: o que foi escolhido, o que foi descartado e por quê, e o custo aceito.
+
+### 3.1 Entrada HTTP
+
+| Decisão | Alternativas | Justificativa | Custo aceito |
 |---|---|---|---|
-| Entrada HTTP | ALB + AWS WAF | API Gateway | API Gateway tem cota de requisições por região que precisaria de aumento para 25.000 TPS. ALB não tem essa limitação. A autenticação já é feita upstream (seção 2.3). |
-| Computação | Amazon EKS, um Deployment por microsserviço | ECS Fargate | Decisão do time. Traz ecossistema Kubernetes (HPA, KEDA, Pod Identity) ao custo de mais operação. Exige plano de atualização de versão do cluster e de add-ons. |
-| Autoscaling | Transaction: HPA por CPU e requisições. Fraud e Notification: KEDA com o scaler de Kafka (lag do consumer group). | Escala fixa | Fraud escala pelo lag, que é o sinal real de capacidade (R2). **Limite:** o número máximo útil de réplicas de um consumer group é o número de partições do tópico. |
-| Mensageria | Confluent Cloud Dedicated, região sa-east-1, conectado por AWS PrivateLink (seção 2.4) | Confluent Standard com TLS público; Amazon MSK | Decisão do time. Dedicated atende os picos de 25.000 TPS e oferece baixa latência e conectividade privada. Custo de throughput e de transferência precisa ser estimado (seção 2.5). |
-| Banco | RDS for MySQL 8.4 Multi-AZ, um banco por serviço | Aurora MySQL | Decisão do time. RDS mantém MySQL 8.4 conforme ADR 0007. Aurora fica como evolução se o spike test mostrar limite de I/O ou necessidade de réplicas de leitura. |
-| Conexões de banco | RDS Proxy | Conexão direta | Controla conexões quando o HPA escala os pods. Também aceita autenticação por IAM. Confirmar no spike test. |
-| Autenticação dos pods no RDS | IAM database authentication, com credencial de IAM obtida via EKS Pod Identity | Usuário e senha no Secrets Manager | Sem senha de banco armazenada. O token expira em 15 minutos e é renovado pelo driver. Avaliar o custo de geração do token no pool de conexões. |
-| Identidade dos pods na AWS | EKS Pod Identity, um role IAM por ServiceAccount, com permissões mínimas | IRSA | Uma associação por serviço, sem permissões compartilhadas entre microsserviços. IRSA é equivalente e pode ser usado se o cluster já estiver nele. |
-| Segredos | Secrets Manager com rotação, sincronizado no cluster pelo External Secrets Operator | Variáveis de ambiente em texto puro ou ConfigMap | Credenciais nunca no código, na imagem ou em manifests versionados. |
-| Criptografia | TLS em trânsito; KMS em repouso (RDS, Secrets Manager, EBS dos nós, ECR) | — | `architecture.md` §9. Chaves gerenciadas pelo cliente no KMS. |
-| Rede | VPC em 3 AZs; subnets públicas (ALB, NAT); privadas (EKS); isoladas (RDS) | — | Bancos nunca expostos à internet. |
-| Egress | NAT Gateway por AZ. Endpoints de VPC para ECR, STS, Secrets Manager, KMS e CloudWatch | Egress sem NAT | Necessário para o provedor de notificação (Fase 4). O Confluent é acessado por PrivateLink, sem NAT. Endpoints reduzem tráfego pelo NAT. |
-| Observabilidade | CloudWatch (logs e métricas), OpenTelemetry para tracing, métricas de lag e de consumo expostas pelo Confluent Cloud | Prometheus e Grafana próprios | Atende `architecture.md` §8. Revisar se o custo de métricas crescer. |
-| CI/CD | GitHub Actions com OIDC para a AWS, imagens no ECR, deploy no EKS (Helm ou GitOps) | Chaves de acesso estáticas | Sem credenciais de longa duração. Pipeline do ADR 0007 é estendida com build de imagem e deploy. |
-| Carga | Gerador de carga (ex.: k6) em um Job no EKS, na mesma VPC | Ferramenta externa | Mede latência dentro da rede, sem ruído de internet. |
+| **ALB + AWS WAF** | API Gateway; NLB | O API Gateway tem cota de requisições por região que exigiria aumento para 25.000 TPS. O ALB não tem essa limitação e suporta mTLS nativamente. O WAF filtra tráfego malicioso antes do serviço. | Sem recursos de gestão de API (planos de uso, chaves) que o API Gateway traria. Não são necessários, porque o cliente já está autenticado. |
 
-### 2.3 Identidade e autenticação
+### 3.2 Autenticação do sistema chamador
 
-Há três fronteiras distintas. Cada uma tem seu mecanismo.
+| Decisão | Alternativas | Justificativa | Custo aceito |
+|---|---|---|---|
+| **mTLS no ALB** como único mecanismo | JWT assinado pelo upstream; chave de API no API Gateway; mTLS + JWT | O cliente final já está autenticado. O que falta provar é que a chamada vem de um sistema autorizado, e o certificado de cliente faz isso. JWT por requisição adicionaria verificação de assinatura e gestão de chaves sem ganho enquanto a auditoria não exigir prova da identidade do cliente em cada requisição. | A identidade do cliente final é confiada ao sistema chamador. Se a auditoria exigir prova por requisição, adicionar JWT na camada de aplicação. |
 
-**a) Cliente final → Transaction Service (já autenticado upstream)**
+### 3.3 Computação
 
-- O sistema não autentica o usuário final. A requisição chega com a identidade já verificada pelo sistema chamador.
-- O Transaction Service confia na identidade do sistema chamador por mTLS no ALB, único mecanismo adotado. O certificado do cliente identifica o canal que já autenticou o cliente. Tráfego sem certificado válido não chega ao serviço. O `customerId` do corpo é aceito como informado por esse canal confiável.
-- Descartado por ora: JWT assinado pelo upstream, que daria prova da identidade do cliente em cada requisição. Adicionar só se a auditoria exigir essa prova. Confirmar com o time upstream (seção 5).
+| Decisão | Alternativas | Justificativa | Custo aceito |
+|---|---|---|---|
+| **EKS** | ECS Fargate | EKS oferece KEDA para escalar pelo lag do Kafka, que é o sinal real de capacidade dos consumidores. Também oferece o Pod Identity para permissões por serviço. ECS também funcionaria, mas exigiria mecanismo próprio para escalar pelo lag. | Mais operação: atualização de versão do cluster, add-ons e políticas de rede. Para um time pequeno, é o custo principal desta decisão. |
+| **KEDA** para consumidores; HPA para a API | Escala fixa; HPA só por CPU | O HPA por CPU não reage ao acúmulo de mensagens. O KEDA escala pelo lag do consumer group. | Número máximo útil de réplicas consumidoras = número de partições (ver 3.5). |
 
-**b) Serviços AWS ↔ serviços AWS (IAM)**
+### 3.4 Mensageria
 
-- Pods EKS → RDS: IAM database authentication pelo RDS Proxy.
-- Pods EKS → Secrets Manager, KMS, ECR, CloudWatch: role IAM por serviço via EKS Pod Identity.
-- CI/CD → AWS: OIDC do GitHub Actions assumindo role IAM.
-- Cada role tem permissões mínimas para o próprio serviço. Nenhum serviço acessa o banco de outro.
+| Decisão | Alternativas | Justificativa | Custo aceito |
+|---|---|---|---|
+| **Confluent Cloud Dedicated**, região `sa-east-1` | Amazon MSK provisionado; MSK Serverless; Confluent Standard | O Dedicated reserva capacidade para os picos de 25.000 TPS, sem o limite de throughput do Standard. Oferece conectividade privada por PrivateLink. Kafka gerenciado remove a operação de brokers, ZooKeeper e atualizações. | Custo de capacidade reservada, maior que MSK provisionado para o mesmo volume. Dependência de fornecedor fora da AWS. |
+| **Kafka KRaft na versão 3.9** no ambiente local | Kafka com ZooKeeper | KRaft elimina o ZooKeeper (ADR 0007). A versão local e a de referência são a mesma linha. | — |
 
-**c) Serviços → Confluent Cloud (fora do IAM)**
+**Por que não MSK:** MSK também atenderia, e a integração com IAM é nativa. A escolha pelo Confluent foi feita pela capacidade de conectividade privada e pelo ecossistema, não por um requisito técnico que o MSK não cumpra. Esta é a decisão mais discutível do desenho, e o argumento é de conveniência operacional e de fornecedor.
 
-O Confluent Cloud não aceita SigV4 no protocolo Kafka. Opções para a identidade dos pods no Kafka:
+### 3.5 Partições e paralelismo
 
-1. **API keys do Confluent, por serviço,** guardadas no Secrets Manager e sincronizadas pelo External Secrets Operator. Simples e suportado. Exige rotação manual ou automatizada e um segredo por serviço.
-2. **OAuth/OIDC com identity pool do Confluent,** confiando no emissor OIDC do cluster EKS. A identidade do pod (token projetado do ServiceAccount) substitui o segredo estático. Caminho alinhado ao objetivo de IAM e confirmado para este projeto. Pontos a validar no spike: a documentação do Confluent descreve OAuth/OIDC com cliente Java 4.0 ou posterior e um fluxo de client assertion (KIP-1258). A integração com o emissor do EKS precisa de spike.
+| Decisão | Alternativas | Justificativa | Custo aceito |
+|---|---|---|---|
+| **12 partições** por tópico, como hipótese inicial | Mais partições desde o início; número calculado por TPS total | 12 partições dão 12 consumidores ativos. Com 25.000 TPS de pico, cada partição recebe cerca de 2.100 eventos por segundo. Esse valor deve ser medido e revisado (ADR 0005). | Aumentar partições depois altera o mapeamento de chaves por cliente (`kafka-partitioning.md` §6). |
+| **Chave `customerId`** | Chave por `transactionId`; sem chave | Garante ordem por cliente dentro da partição, o que a regra de frequência precisa. | Cliente com volume alto concentra carga em uma partição (partição quente, risco R4). |
 
-Decisão: OAuth/OIDC (opção 2), confiando no emissor OIDC do cluster EKS. Não há segredo de Kafka no cluster. O spike valida o fluxo completo antes da produção: token projetado do ServiceAccount, client assertion e filtros do identity pool. Se o fluxo não funcionar, a alternativa é a opção 1.
+### 3.6 Banco de dados
 
-### 2.4 Confluent Cloud: tipo de cluster e rede
+| Decisão | Alternativas | Justificativa | Custo aceito |
+|---|---|---|---|
+| **RDS for MySQL 8.4 Multi-AZ**, um banco por serviço | Aurora MySQL; DynamoDB; PostgreSQL | MySQL 8.4 é a versão já definida no ADR 0007, e o RDS mantém essa versão sem migração. Multi-AZ dá alta disponibilidade sem reescrita. Um banco por serviço preserva a autonomia de dados (`architecture.md` §5). | Aurora teria mais throughput de escrita e réplicas de leitura mais baratas. Fica como evolução se o cálculo de frequência for o gargalo (R1). |
+| **RDS Proxy** | Conexão direta | O autoscaling multiplica conexões. O proxy as agrupa. | Custo adicional e um salto de rede. |
+| **IAM database authentication** | Senha no Secrets Manager | Não há senha armazenada. O token expira em 15 minutos e é renovado pelo driver. | Geração de token no pool de conexões. |
 
-- A conectividade privada (PrivateLink) depende do tipo de cluster. A documentação de rede da Confluent indica que o tipo Standard usa conectividade pública na AWS, e que PrivateLink de entrada é oferecido para Dedicated. Para Enterprise, as fontes são inconsistentes; confirmar nos documentos atuais antes de decidir.
-- O tipo de rede **não pode ser alterado depois da criação do cluster**. A escolha precisa ser feita antes do provisionamento.
-- Decisão: Dedicated com PrivateLink. O tráfego com o Confluent não passa pelo NAT Gateway. Os picos de 25.000 TPS e a baixa latência justificam o tipo.
-  - Produção: Dedicated com PrivateLink.
-  - Homologação: Enterprise ou Standard, sem PrivateLink, com TLS público pelo NAT. A escolha entre os dois depende do custo e da necessidade de representar a rede de produção no spike.
-- O cluster fica na **mesma região AWS** dos workloads, sa-east-1 (São Paulo). Isso reduz latência e custo de transferência entre nuvens. Confirmar que o Confluent Dedicated está disponível nessa região.
+### 3.7 Identidade e segredos
 
-### 2.5 Custo de transferência (ordem de grandeza)
+| Decisão | Alternativas | Justificativa | Custo aceito |
+|---|---|---|---|
+| **EKS Pod Identity**, uma role por serviço | IRSA; chaves de acesso no pod | Permissões mínimas por serviço. Pod Identity simplifica a associação, sem anotação de ServiceAccount por cluster. IRSA atenderia igualmente. | Dependência de recurso recente do EKS. |
+| **OIDC do EKS para autenticar no Kafka** | API keys do Confluent no Secrets Manager | Não há segredo de Kafka armazenado. A identidade do pod é o token do ServiceAccount, verificado pelo Confluent. | Exige cliente Kafka com suporte a OAuth/OIDC e validação do fluxo. API keys são o plano de contingência. |
+| **Secrets Manager** para o restante | Variáveis de ambiente | Rotação e auditoria de acesso. | Custo por segredo. |
 
-Com mensagens de 1 KB, 25.000 TPS no pico geram cerca de 25 MB/s, ou aproximadamente 2,2 TB por dia. Com 8.000 TPS de média, cerca de 0,7 TB por dia. Esse tráfego atravessa o NAT Gateway em ambos os sentidos, se o Confluent for acessado por endpoint público. Cobrança por processamento de NAT, por transferência e por throughput do Confluent precisa ser calculada com a tabela de preços vigente antes da escolha da seção 2.4. Com PrivateLink, esse tráfego não passa pelo NAT Gateway, mas o PrivateLink tem cobrança própria por dado processado. As duas cobranças precisam ser confirmadas na estimativa.
+### 3.8 Conectividade e rede
 
-### 2.6 Ambientes
+| Decisão | Alternativas | Justificativa | Custo aceito |
+|---|---|---|---|
+| **PrivateLink** para o Kafka | Acesso público por NAT | O tráfego de mensagens não passa pela internet nem pelo NAT. Isso reduz a superfície de ataque e o custo de processamento de NAT. | Cobrança própria por dados processados pelo PrivateLink. |
+| **Subnets isoladas** para os bancos | Subnets privadas | Os bancos não têm rota para internet. | — |
+| **VPC endpoints** para ECR, STS, Secrets Manager, KMS e CloudWatch | Tráfego pelo NAT | Reduz custo e mantém o tráfego interno à AWS. | Custo por endpoint. |
 
-| Ambiente | Uso | Características |
+### 3.9 Observabilidade
+
+| Decisão | Alternativas | Justificativa | Custo aceito |
+|---|---|---|---|
+| **Micrometer + Actuator**, com métricas do cliente Kafka para lag | Prometheus e Grafana próprios; CloudWatch apenas | Lag é exposto pelo próprio cliente Kafka e verificado no projeto. A latência do alerta é medida por `fraud.alert.latency`. | Exporter para CloudWatch ou Prometheus precisa ser escolhido na implantação. |
+| **Micrometer Tracing** (ponte OpenTelemetry), spans no console | OTLP para um coletor; Zipkin | Mesma fachada das métricas. O console dispensa infraestrutura extra na demonstração (ADR 0010). | Exportação para um coletor é evolução. |
+
+### 3.10 CI/CD
+
+| Decisão | Alternativas | Justificativa | Custo aceito |
+|---|---|---|---|
+| **GitHub Actions** com `mvn verify` e Testcontainers | Jenkins; pipeline sem testes de integração | O pipeline roda os testes com MySQL e Kafka reais, o que pega erros que testes unitários não pegam. O GitHub é onde o projeto vive. | Depende de runners com Docker. |
+| **OIDC do GitHub** para assumir role na AWS | Chaves de acesso estáticas | Sem credenciais de longa duração. | Configuração de confiança por repositório. |
+
+## 4. Como a arquitetura atende o requisito de 500 ms
+
+O requisito é um **máximo absoluto**. Por isso o desenho evita filas e esperas longas no caminho crítico.
+
+| Etapa | Contribuição típica | Como é controlada |
 |---|---|---|
-| Local | Desenvolvimento | Docker Compose (ADR 0007). Kafka local, sem Confluent. Fator de replicação 1. |
-| Homologação | Testes de integração e spike test | Mesmo desenho de produção, dimensionamento reduzido. Confluent Enterprise ou Standard, sem PrivateLink. Fator de replicação 3. |
-| Produção | Operação | Dimensionamento definido pelo spike test e pela carga progressiva. |
+| Recebimento e gravação da transação com outbox | Uma transação de banco | Índices e transação curta |
+| Espera pelo publicador do outbox | Até o intervalo de polling (200 ms) | **Maior componente controlável.** Pode ser reduzido por CDC, decisão adiada pelo ADR 0003 |
+| Publicação no Kafka e replicação | Milissegundos | `acks=all` com replicação; o Dedicated tem capacidade reservada |
+| Consumo, análise e publicação do alerta | Uma consulta de frequência e a publicação | Índice por cliente e instante; consumo em lote |
 
-A homologação só é representativa se o dimensionamento e a configuração forem documentados, como exige a meta de 25.000 TPS (`implementation-plan.md`).
+**Medição local (execução de referência do projeto):** o fluxo HTTP até a notificação aceita teve p50 de 257 ms e p95 de 469 ms. Esse tempo inclui a espera pelo polling do outbox e a entrega da notificação. A latência de geração do alerta, sem a notificação, é medida pela métrica `fraud.alert.latency`.
 
-### 2.7 Escala e riscos
+**Leitura honesta:** os números locais dependem da máquina e não são garantia de comportamento na arquitetura alvo. Servem para mostrar que o caminho crítico funciona e onde estão os componentes de espera.
 
-**Spike test:** teste de carga curto e focado em um risco específico, feito antes de construir o restante. Ele responde se o risco é aceitável e, se não for, leva à mudança de desenho antes de a implementação avançar. No roadmap, o spike é a Fase 3b (regra BR-01 em MySQL). Neste ADR, o spike também valida o fluxo OIDC com o EKS, a alocação do orçamento de 500 ms e o número de partições (R2).
+## 5. Capacidade (análise)
 
-- **R1 (MySQL e BR-01):** o banco do Fraud Detection é o principal risco de capacidade. Se o spike test não atingir a latência, a alternativa é Redis ou janela pré-agregada (ADR 0004 e ADR 0005 já preveem essa evolução). Esta decisão não é tomada aqui.
-- **R2 (partições):** 12 partições resultam em cerca de 2.100 eventos/s por partição no pico. Com KEDA, **não há ganho de réplicas acima do número de partições**. Se o pico exigir mais consumidores, o número de partições precisa aumentar antes da Fase 5, o que altera o mapeamento de chaves (`kafka-partitioning.md` §6). No Confluent Dedicated, verificar o limite de partições do cluster escolhido.
-- **R3 (outbox):** o polling do publicador consulta o MySQL do Transaction Service em intervalos de 200 ms por instância. A carga é medida no spike test (ADR 0003).
-- **R4 (dependência de fornecedor do Kafka):** o Confluent é um fornecedor fora da AWS, com custo e contrato próprios. A camada de aplicação continua usando o protocolo Kafka padrão, então a troca de provedor afeta só a infraestrutura e a configuração de conexão.
-- **Custo:** homologação em topologia representativa tem custo recorrente, incluindo o Confluent. Pode ser ligada só durante os testes de carga.
+- **Partições:** 25.000 TPS / 12 partições ≈ 2.100 eventos/s por partição. Esse valor indica onde a capacidade de um consumidor deve ser medida.
+- **Consumidores:** com KEDA, o número máximo útil é igual ao número de partições.
+- **Tráfego para o Kafka:** com mensagens de 1 KB, o pico de 25.000 TPS é ≈ 25 MB/s, ou cerca de 2,2 TB por dia. A média de 8.000 TPS é ≈ 0,7 TB por dia.
+- **Custo de transferência:** o custo depende da tabela de preços vigente e do caminho de rede. Por isso o PrivateLink foi escolhido: o tráfego não passa pelo processamento de NAT.
 
-### 2.8 Latência e monitoramento do pipeline
+## 6. Alternativas descartadas (resumo)
 
-**Meta:** gerar alertas em no máximo 500 ms após o recebimento da transação pelo Transaction Service, até a publicação do evento de alerta em `fraud-alerts`. A meta é um limite máximo, não um percentil. p95 e p99 são medidos para diagnóstico. A meta vale para transações que geram alerta. A latência da análise sem alerta é medida à parte. A entrega ao destinatário tem SLA próprio, condicionado aos provedores externos, e não entra nessa meta.
+- **API Gateway:** cota de requisições insuficiente para o pico sem aumento.
+- **ECS Fargate:** menos operação, mas sem KEDA nativo para escalar pelo lag.
+- **MSK Serverless:** throughput previsível para o pico favorece o provisionado.
+- **Aurora MySQL:** evolução possível; não é necessária antes de medir gargalo de I/O.
+- **Redis para frequência:** adiado; só entra se o cálculo em MySQL não atingir a latência (R1, ADR 0001).
+- **CDC com Debezium:** adiado; o polling atende e CDC exige gatilho medido (ADR 0003).
 
-**Etapas que consomem o orçamento de 500 ms** (a alocação por etapa é definida no spike):
+## 7. Riscos e limitações
 
-- Recebimento, validação e gravação da transação com o outbox.
-- Espera pelo publicador do outbox. Com o intervalo de polling de 200 ms (ADR 0003), essa espera pode chegar a 200 ms e consome parte relevante do orçamento. O intervalo deve ser reavaliado no spike.
-- Publicação no Kafka e replicação no Confluent Dedicated.
-- Consumo pelo Fraud Detection, análise e publicação do alerta.
+- **Latência da frequência em MySQL (R1):** pode não atingir o orçamento sob carga. A evolução é Redis ou janela pré-agregada.
+- **Partição quente (R4):** um cliente com volume alto concentra carga. A chave por `customerId` é necessária para a regra, então o risco é aceito e monitorado.
+- **Dependência do Confluent:** fornecedor fora da AWS. A aplicação usa o protocolo Kafka padrão, então a troca afeta só a configuração de conexão.
+- **Operação do EKS:** atualizações e add-ons são responsabilidade do time.
+- **Sem recuperação de desastre entre regiões:** fora do escopo do estudo; a arquitetura é uma região com três AZs.
 
-**Monitorar continuamente:**
+## 8. Pendências de análise
 
-- Consumer lag por consumer group e partição. É o sinal de capacidade (R2).
-- Latência de publicação: do registro no outbox até o ack do Kafka.
-- Latência de consumo: da publicação do evento até o fim do processamento pelo consumidor.
-- Latência ponta a ponta: do recebimento ao alerta publicado, com p50, p95 e p99.
-- Idade do registro mais antigo pendente no outbox (L-03).
-- Métricas do Confluent Dedicated (throughput e latências de produção e consumo), para correlação.
-
-Os limites dos alertas operacionais (quando o time é acionado) ficam para depois, conforme definição do time.
-
-## 3. Consequências
-
-- O código dos serviços não depende de AWS nem de Confluent. Clientes Kafka, JDBC e configuração por variáveis de ambiente funcionam igual no compose e na nuvem. Para o Confluent, a diferença é a configuração de SASL/TLS.
-- Tópicos (12 partições, retenção de 7 dias) são definidos como código de infraestrutura, por exemplo Terraform com o provider do Confluent, e não pelo serviço de inicialização do compose.
-- O provedor de notificação e o Confluent (se público) são destinos fora da VPC. Ambos saem pelo NAT e devem ficar restritos a esses destinos.
-- Operação de EKS (atualização do cluster, add-ons, nós e políticas de rede) passa a ser responsabilidade do time. Isso é um custo real para um time pequeno.
-- Credenciais, endpoints e certificados vêm do Secrets Manager e da configuração de ambiente. Nenhum segredo de banco fica no cluster.
-
-## 4. Decisões
-
-Decisões aceitas:
-
-1. **Computação:** Amazon EKS.
-2. **Banco:** RDS for MySQL 8.4 Multi-AZ, com RDS Proxy e IAM database authentication.
-3. **Kafka:** Confluent Cloud, na mesma região AWS dos workloads.
-4. **Identidade AWS:** IAM via EKS Pod Identity, sem chaves de longa duração.
-5. **Região:** sa-east-1 (São Paulo).
-6. **Autenticação upstream:** mTLS no ALB como único mecanismo.
-7. **Autenticação com o Confluent:** OAuth/OIDC com o emissor do EKS, confirmado. API keys no Secrets Manager como alternativa.
-8. **Confluent:** Dedicated com PrivateLink em produção. Homologação em Enterprise ou Standard, sem PrivateLink.
-9. **Volumes e SLA:** volume médio de 8.000 TPS, com picos de até 25.000 TPS. Gerar alertas em no máximo 500 ms após o recebimento da transação.
-
-## 5. Pendências
-
-1. **Sistema chamador upstream:** confirmar que ele apresenta certificado de cliente ao ALB e que valida o `customerId` antes de enviar a transação.
-2. **Autenticação com o Confluent:** validar o fluxo OIDC no spike. Se falhar, usar API keys no Secrets Manager.
-10. **Critério do 500 ms:** confirmado como máximo absoluto, não percentil. Exige margem maior no orçamento de latência. A discussão da alocação por etapa fica para o spike.
-11. **Alertas operacionais:** limites e destinatários do alerta de monitoramento, a definir pelo time.
-3. **Confluent Dedicated:** confirmar disponibilidade de PrivateLink e de Dedicated em sa-east-1, limite de partições e custo.
-4. **Residência de dados:** confirmar os requisitos de LGPD (`architecture.md` §9) para dados em sa-east-1 e que o Confluent oferece cluster nessa região.
-5. **Custo:** estimar o Confluent Dedicated (capacidade para 25.000 TPS de pico), PrivateLink, NAT e transferência para 8.000 TPS médios e 25.000 TPS de pico.
-6. **Resultado do spike test:** define dimensionamento, necessidade de Redis ou Aurora e necessidade de RDS Proxy.
-7. **Requisitos de LGPD e segurança** (`roadmap-execucao.md`, seção 1).
-8. **Provedor e SLA de notificação externa** (define o egress da seção 2.2).
+1. Validar o fluxo OIDC do EKS com o Confluent (decisão tomada, falta validação técnica).
+2. Revisar o número de partições com base em medição de capacidade por consumidor.
+3. Avaliar CDC se o intervalo de polling consumir parte relevante do orçamento de 500 ms.
+4. Confirmar a tabela de preços para o cálculo de custo.
