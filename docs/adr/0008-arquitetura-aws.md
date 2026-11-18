@@ -8,7 +8,7 @@
 
 O sistema precisa atender a requisitos de volume e latência, e a arquitetura alvo foi desenhada para isso na AWS. Este ADR justifica cada escolha: o que foi escolhido, o que foi descartado e por quê, e qual é o custo de cada decisão.
 
-**Escopo deste documento:** arquitetura alvo e raciocínio de decisão. A execução e a verificação do projeto acontecem localmente (Docker Compose) e no GitHub (CI com Testcontainers). Este ADR não descreve passos de implantação.
+**Escopo deste documento:** arquitetura alvo e raciocínio de decisão. A execução e a verificação do projeto acontecem localmente (Docker Compose, `mvn verify` com Testcontainers). A CI com GitHub Actions faz parte da arquitetura alvo, mas nesta versão não há workflow ativo. Este ADR não descreve passos de implantação.
 
 ### 1.1 Requisitos que orientam as decisões
 

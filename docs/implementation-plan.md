@@ -71,7 +71,7 @@ A IA não deve inventar regras de negócio ou resolver pendências sem validaç�
 
 | Fase | Estado | Evidência |
 |---|---|---|
-| 1 — Fundação | Concluída | Monorepo, Compose, CI no GitHub verde |
+| 1 — Fundação | Concluída | Monorepo, Compose, workflow de CI criado (execução remota não verificada e removido nesta versão) |
 | 2 — Transaction Service | Concluída | 27 testes; idempotência, outbox, atomicidade, Kafka indisponível |
 | 3 — Fraud Detection | Concluída | BR-02, BR-01, inbox, retry, DLQ, offset; spike escrito e fora do build padrão |
 | 4 — Notification | Concluída | Provedor simulado e Mailpit (ADR 0010); estados e reentrega |

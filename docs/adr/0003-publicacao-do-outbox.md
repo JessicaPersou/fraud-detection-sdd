@@ -29,7 +29,7 @@ Polling publisher dentro do próprio Transaction Service:
 
 - Não exige infraestrutura extra (Debezium, Kafka Connect), o que simplifica a Fase 1 e 2.
 - Demonstra o padrão de forma completa, com garantia *at-least-once* no lado do produtor. O consumidor trata duplicatas (ADR 0001, decisão 6).
-- A latência adicional do polling é pequena frente ao SLA de 500 ms, que mede a partir do consumo pelo Fraud Detection Service.
+- A latência adicional do polling é pequena frente ao SLA de 500 ms, que mede a partir do recebimento da transação pelo Transaction Service até o término do processamento (`project-overview.md` §3).
 
 ## Riscos
 

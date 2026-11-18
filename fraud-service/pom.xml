@@ -14,6 +14,10 @@
     <name>Fraud Detection Service</name>
     <description>Consome TransactionCreated, aplica regras antifraude (BR-01, BR-02) e publica FraudDetected.</description>
 
+    <properties>
+        <fraud.excluded.groups>spike</fraud.excluded.groups>
+    </properties>
+
     <dependencies>
         <dependency>
             <groupId>com.persou.antifraud</groupId>
@@ -89,8 +93,9 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <!-- Spike test de carga (Fase 3b): executado com -Dgroups=spike, fora do build padrão. -->
-                    <excludedGroups>spike</excludedGroups>
+                    <!-- Spike test de carga (Fase 3b) fica fora do build padrão. Para executá-lo:
+                         mvn -pl fraud-service -am test -Dgroups=spike -Dfraud.excluded.groups= -Dsurefire.failIfNoSpecifiedTests=false -->
+                    <excludedGroups>${fraud.excluded.groups}</excludedGroups>
                 </configuration>
             </plugin>
         </plugins>

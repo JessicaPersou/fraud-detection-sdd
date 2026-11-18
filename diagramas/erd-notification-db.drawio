@@ -1,0 +1,11 @@
+<mxfile host="app.diagrams.net" agent="gen_diagrams.py" version="24.0.0">
+  <diagram name="ERD notification_db" id="2">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1900" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+<mxCell id="n2" value="&lt;b&gt;notification_record&lt;/b&gt;&lt;br&gt;&amp;nbsp;&lt;br&gt;event_id  VARCHAR(36)   [PK]&lt;br&gt;transaction_id  VARCHAR(36)   [NOT NULL]&lt;br&gt;customer_id  VARCHAR(64)   [NOT NULL]&lt;br&gt;risk_level  VARCHAR(10)   [NOT NULL]&lt;br&gt;channel  VARCHAR(32)   [NOT NULL]&lt;br&gt;recipient  VARCHAR(255)   [NOT NULL]&lt;br&gt;status  VARCHAR(32)   [NOT NULL]&lt;br&gt;provider_reference  VARCHAR(128)   [NULL]&lt;br&gt;attempts  INT   [NOT NULL DEFAULT 0]&lt;br&gt;last_error  VARCHAR(255)   [NULL]&lt;br&gt;updated_at  DATETIME(6)   [NOT NULL]&lt;br&gt;&amp;nbsp;&lt;br&gt;IDX idx_notification_status (status)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#14213D;fontFamily=Courier New;fontSize=12;align=left;verticalAlign=top;spacing=8;" vertex="1" parent="1"><mxGeometry x="40" y="60" width="420" height="304" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

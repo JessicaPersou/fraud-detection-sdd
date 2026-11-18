@@ -25,6 +25,8 @@ Este documento registra as decisões técnicas tomadas na Fase 0 e as lacunas id
 
 ### 1.1 Exemplo de configuração (regras)
 
+> **Atenção:** este exemplo mostra a intenção de configuração. As regras `geographic` (BR-03) e `risk-score` (BR-04 com pesos) **não estão implementadas**. Na implementação atual, as regras são `amount` e `frequency` (ver `business-rules.md` §7).
+
 ```yaml
 fraud:
   rules:
@@ -99,6 +101,8 @@ antifraud-system/
 ---
 
 ## 5. Pendências identificadas
+
+Os itens abaixo foram resolvidos pelos ADRs 0002 a 0006 e 0009, e permanecem aqui para histórico. Para o estado atual, ver o ADR indicado em cada item.
 
 Os itens abaixo não foram definidos no resumo aprovado. Não devem ser implementados até validação.
 

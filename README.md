@@ -24,6 +24,141 @@ Sistema de detecção de transações suspeitas em tempo real. Estudo de caso co
 
 Justificativas de cada decisão estão nos ADRs. Os principais são ADR 0001 (decisões iniciais), ADR 0003 (outbox), ADR 0004 (idempotência), ADR 0005 (consumidores) e ADR 0008 (arquitetura alvo).
 
+## Subir a aplicação completa
+
+Este passo a passo sobe os três serviços, com Kafka, MySQL e Mailpit, na máquina local. Use a ordem abaixo.
+
+Pré-requisitos: JDK 21, Maven 3.9+ e Docker com Compose v2, com o Docker em execução.
+
+**1. Subir a infraestrutura** (Kafka, MySQL e Mailpit). Na primeira vez, a imagem é baixada e os tópicos e bancos são criados:
+
+```bash
+docker compose -f infrastructure/docker/docker-compose.yml up -d --wait
+```
+
+**2. Gerar os JARs executáveis** dos três serviços:
+
+```bash
+mvn -DskipTests package
+```
+
+Os JARs ficam em `<serviço>/target/<serviço>-0.1.0-SNAPSHOT-exec.jar`.
+
+**3. Definir as variáveis obrigatórias.** Fraud Detection e Notification não sobem sem elas. Os valores são de demonstração, não de negócio (ver a seção "Variáveis obrigatórias" abaixo).
+
+Bash (Git Bash):
+
+```bash
+export FRAUD_AMOUNT_THRESHOLD_CENTS=100000
+export FRAUD_FREQUENCY_MAX_TRANSACTIONS=5
+export FRAUD_FREQUENCY_WINDOW=PT60S
+export NOTIFICATION_CHANNEL=EMAIL
+export NOTIFICATION_RECIPIENT=ops-demo@example.invalid
+export NOTIFICATION_PROVIDER=smtp
+```
+
+PowerShell:
+
+```powershell
+$env:FRAUD_AMOUNT_THRESHOLD_CENTS = "100000"
+$env:FRAUD_FREQUENCY_MAX_TRANSACTIONS = "5"
+$env:FRAUD_FREQUENCY_WINDOW = "PT60S"
+$env:NOTIFICATION_CHANNEL = "EMAIL"
+$env:NOTIFICATION_RECIPIENT = "ops-demo@example.invalid"
+$env:NOTIFICATION_PROVIDER = "smtp"
+```
+
+**4. Iniciar cada serviço em um terminal separado.** As variáveis do passo 3 valem só para o terminal em que foram definidas. Se abrir um terminal novo, defina-as de novo antes de iniciar o serviço.
+
+```bash
+java -jar transaction-service/target/transaction-service-0.1.0-SNAPSHOT-exec.jar
+java -jar fraud-service/target/fraud-service-0.1.0-SNAPSHOT-exec.jar
+java -jar notification-service/target/notification-service-0.1.0-SNAPSHOT-exec.jar
+```
+
+Cada serviço fica em primeiro plano e imprime os logs, incluindo os spans de trace. Para encerrar um serviço, use `Ctrl+C` no terminal dele.
+
+**5. Verificar que estão no ar.** Cada serviço responde `UP` em `/actuator/health`:
+
+| Serviço | Porta | Verificação |
+|---|---|---|
+| Transaction Service | 8081 | `curl -s localhost:8081/actuator/health` |
+| Fraud Detection Service | 8082 | `curl -s localhost:8082/actuator/health` |
+| Notification Service | 8083 | `curl -s localhost:8083/actuator/health` |
+
+Se algum serviço não subir, a causa mais comum é uma variável obrigatória faltando (passo 3) ou uma porta ocupada. Para trocar a porta, defina `SERVER_PORT`.
+
+**6. Enviar uma transação de teste:**
+
+```bash
+curl -s -X POST localhost:8081/transactions -H "Idempotency-Key: $(uuidgen)" \
+  -H "Content-Type: application/json" -d '{"customerId":"c-2","amountInCents":250000,"currency":"BRL"}'
+```
+
+Esse valor passa do limite de demonstração, então a análise sai como MEDIUM e o alerta é enviado. Para ver o e-mail, abra `http://localhost:8025` (Mailpit). Mais exemplos estão na seção "Demonstração do caminho feliz e das fraudes".
+
+**7. Parar tudo:**
+
+```bash
+docker compose -f infrastructure/docker/docker-compose.yml down
+```
+
+Esse comando para a infraestrutura e mantém os dados do MySQL. Para apagar também os dados, use `down -v`. Atenção: o script que cria os bancos roda só na primeira vez em que o volume do MySQL é criado. Se você apagar o volume, a próxima subida recria os bancos. Se você não apagar, os bancos continuam como estavam.
+
+## Como rodar os testes
+
+### Pré-requisitos
+
+- JDK 21 e Maven 3.9+.
+- Docker em execução. Os testes de integração, os smoke tests e o ponta a ponta sobem containers reais com Testcontainers: `mysql:8.4` e `apache/kafka:3.9.1`. Na primeira execução, as imagens são baixadas, então ela é mais lenta.
+- Os testes unitários não dependem de Docker.
+- Os containers de teste usam portas aleatórias. Você pode deixar o `docker compose` da seção "Subir a aplicação completa" rodando ao mesmo tempo, sem conflito.
+
+### Comandos
+
+| Objetivo | Comando |
+|---|---|
+| Todos os testes e o empacotamento | `mvn verify` |
+| Todos os testes, sem empacotar | `mvn test` |
+| Um módulo | `mvn -pl transaction-service -am test` |
+| Uma classe de teste | `mvn -pl fraud-service -am test -Dtest=AnalyzeTransactionServiceTest -Dsurefire.failIfNoSpecifiedTests=false` |
+| Um método de teste | `mvn -pl fraud-service -am test -Dtest=AnalyzeTransactionServiceTest#duplicateEventDoesNotRepeatAnalysisOrAlert -Dsurefire.failIfNoSpecifiedTests=false` |
+| Só o ponta a ponta | `mvn -pl e2e-tests -am test -Dtest=AntifraudEndToEndTest -Dsurefire.failIfNoSpecifiedTests=false` |
+| Spike test da BR-01 (fora do build padrão) | `mvn -pl fraud-service -am test -Dgroups=spike -Dfraud.excluded.groups= -Dsurefire.failIfNoSpecifiedTests=false` |
+
+Notas sobre os comandos:
+
+- `-am` (also make) compila também os módulos dos quais o módulo depende, como `event-contracts` e `test-support`. Sem ele, o módulo pode não encontrar as dependências.
+- Com `-Dtest`, o Maven roda só o teste pedido no módulo escolhido. Os outros módulos da compilação não têm esse teste, e `-Dsurefire.failIfNoSpecifiedTests=false` evita que o build falhe por isso.
+- O projeto não usa Failsafe. Os testes de integração rodam na mesma fase que os unitários, então `mvn test` e `mvn verify` executam a mesma lista de testes. O `verify` ainda empacota os JARs.
+- O spike test é excluído do build padrão pelo grupo `spike`, definido no `fraud-service/pom.xml` pela propriedade `fraud.excluded.groups`. O comando acima zera essa propriedade para executá-lo.
+
+### O que cada tipo de teste cobre
+
+| Tipo | Quantidade | Onde está | Docker |
+|---|---|---|---|
+| Unitários | 31 | `DomainModelTest`, `ReceiveTransactionServiceTest` (transaction); `AnalyzeTransactionServiceTest`, `FraudRuleEvaluatorTest` (fraud); `SmtpNotificationProviderTest`, `ProcessFraudAlertServiceTest` (notification) | Não |
+| Integração | 21 | Módulos `*-service`, com MySQL e Kafka reais: `TransactionApiIntegrationTest`, `AtomicityIntegrationTest`, `OutboxPublishingResilienceIntegrationTest`, `RetentionCleanupIntegrationTest`, `FraudPipelineIntegrationTest`, `ConsumerRetryIntegrationTest`, `NotificationPipelineIntegrationTest` | Sim |
+| Smoke | 4 | `*SmokeTest` em cada serviço: o contexto sobe e o health responde `UP` | Sim |
+| Ponta a ponta | 8 | `e2e-tests/AntifraudEndToEndTest`: os três serviços na mesma JVM | Sim |
+| Spike (fora do build) | 1 | `FrequencyRuleSpikeTest`, tag `spike` | Sim |
+
+Os cenários de teste, com os IDs usados nos documentos (F-01, I-07, O-02 e outros), estão em `docs/cenarios-teste.md`, seção 10. Essa seção mostra qual classe cobre cada cenário.
+
+Os containers de MySQL e Kafka são compartilhados dentro de cada execução pela classe `SharedInfrastructure` (módulo `test-support`). Eles são iniciados uma vez por JVM, não a cada teste.
+
+### Relatórios e resultados
+
+- Cada módulo grava os relatórios em `<módulo>/target/surefire-reports/`. Há um `.txt` (resumo) e um `.xml` por classe de teste.
+- O Maven mostra o resumo no fim do build: `Tests run: ..., Failures: ..., Errors: ..., Skipped: ...`. Um build bem-sucedido termina com `BUILD SUCCESS`.
+
+### Problemas comuns
+
+- **"Could not find a valid Docker environment"**: o Docker não está rodando. Abra o Docker Desktop (no Windows, com WSL2 ativo) e rode o comando de novo.
+- **Primeira execução muito lenta**: as imagens `mysql:8.4` e `apache/kafka:3.9.1` estão sendo baixadas. As próximas execuções são mais rápidas.
+- **Falha intermitente por tempo**: em máquinas lentas, os testes assíncronos (Kafka e outbox) podem estourar o tempo de espera. Rode a classe que falhou isoladamente com `-Dtest=` para confirmar se é instabilidade ou defeito.
+- **Teste falha após mudar uma migração**: confira `V1` e `V2` em `transaction-service/src/main/resources/db/migration/`. Os testes usam as mesmas migrações da aplicação.
+
 ## Como executar
 
 Pré-requisitos: JDK 21, Maven 3.9+ e Docker com Compose v2.
@@ -34,13 +169,7 @@ Pré-requisitos: JDK 21, Maven 3.9+ e Docker com Compose v2.
 mvn verify
 ```
 
-Os testes de integração usam Testcontainers e precisam de Docker ativo. Os 68 testes cobrem unitários, integração com MySQL e Kafka reais, o fluxo ponta a ponta entre os três serviços (`e2e-tests`) e o smoke test de cada serviço.
-
-Para o spike test da regra de frequência (fora do build padrão):
-
-```bash
-mvn -pl fraud-service -Dgroups=spike test
-```
+O build padrão executa 64 testes e o spike test da BR-01 fica fora dele. Comandos por tipo de teste, o que cada um cobre e como resolver problemas estão em "Como rodar os testes", no início desta seção.
 
 ### 2. Infraestrutura local
 
@@ -116,9 +245,14 @@ Para ver as análises e as notificações, consulte `fraud_db.fraud_analysis` e 
 
 Para a regra de frequência, envie mais de cinco transações do mesmo cliente em 60 segundos. A sexta é classificada como MEDIUM pela regra `TRANSACTION_FREQUENCY`.
 
-## Verificação no GitHub
+## Verificação
 
-O workflow `.github/workflows/ci.yml` executa `mvn -B verify` a cada push e pull request na `main`. A CI roda os mesmos testes da execução local, com Docker disponível no runner.
+Nesta versão não há pipeline de CI ativa no repositório: o workflow `.github/workflows/ci.yml` foi removido. A verificação é feita localmente com `mvn verify` (Docker ativo). A intenção de manter GitHub Actions na arquitetura alvo está no ADR 0008, seção 3.10.
+
+## Apresentação e diagramas
+
+- `diagramas/`: arquiteturas (simples e alvo na AWS) e modelos de dados dos três bancos, em formato draw.io, com os DDLs consolidados em `diagramas/ddl/`.
+- A apresentação e o roteiro de entrevista não ficam no repositório.
 
 ## Decisões de referência
 

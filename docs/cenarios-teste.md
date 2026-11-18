@@ -171,4 +171,4 @@ Esta seção registra o que já tem teste automatizado. Os itens sem teste estã
 | L-04 | Pendente | Partição quente não medida |
 | L-05 | Pendente | Só há latência informativa no e2e |
 | L-06 | Pendente | Carga até 25.000 TPS não executada |
-| L-07 | Parcial | Lag exposto e testado (`FraudServiceSmokeTest.exposesKafkaConsumerLagMetrics`); latência de publicação e de consumo pendentes |
+| L-07 | Parcial | Lag exposto e testado (`FraudServiceSmokeTest.exposesKafkaConsumerLagMetrics`); latência de publicação implementada (`outbox.publish.latency`); latência de consumo isolada pendente |

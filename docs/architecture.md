@@ -1,5 +1,7 @@
 # Architecture — Fraud Detection System
 
+Diagramas editáveis (draw.io): `diagramas/`. Inclui a arquitetura simples de execução local, a arquitetura alvo na AWS (ADR 0008) e os modelos de dados dos três bancos (`diagramas/ddl/`).
+
 ## 1. Visão geral
 
 O sistema será composto por três microsserviços independentes, comunicando-se por eventos Kafka.

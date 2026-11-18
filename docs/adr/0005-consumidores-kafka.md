@@ -15,7 +15,7 @@
 | DLQ de alertas | `fraud-alerts.DLT` |
 | Consumer group do Fraud Detection | `fraud-detection-service` |
 | Consumer group do Notification | `notification-service` |
-| Partições iniciais | `12` (hipótese, validada no spike test) |
+| Partições iniciais | `12` (hipótese, a validar no spike test) |
 | Fator de replicação | `1` na execução local (um broker); `3` na arquitetura alvo (ADR 0008) |
 | Retenção dos tópicos principais | 7 dias (`retention.ms=604800000`) |
 

@@ -14,7 +14,7 @@
 | Mensageria | Apache Kafka 3.9 em modo KRaft | Sem ZooKeeper |
 | Banco | MySQL 8.4 LTS | Conforme `project-overview.md` |
 | Infra local | Docker Compose v2 | Kafka, MySQL e tópicos criados por serviço de inicialização |
-| CI | GitHub Actions: `mvn verify` | Build e testes em cada push |
+| CI | GitHub Actions previsto na arquitetura alvo (`mvn verify`). Sem workflow ativo nesta versão | Build e testes em cada push, quando reativado |
 | Testes | JUnit 5, Spring Boot Test | Unitários, integração (Testcontainers na Fase 2) |
 
 ## Justificativa

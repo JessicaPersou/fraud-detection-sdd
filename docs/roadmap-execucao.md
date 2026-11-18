@@ -16,7 +16,7 @@ Este documento organiza a resolução das pendências e a execução das fases d
 | Consumidores (grupos, DLQ, retry, inbox) | Parâmetros definidos, 12 partições como hipótese | ADR 0005 | Mais partições por evidência de spike |
 | Moeda e precisão | Somente BRL na v1, expoente ISO 4217 | ADR 0006 | Novas moedas mediante validação |
 | Stack e ferramentas | Java 21, Spring Boot 4.1.2, Maven, Kafka KRaft, MySQL 8.4 | ADR 0007 | Atualizações em PRs dedicados |
-| Arquitetura alvo na AWS | Justificativa das decisões de arquitetura (EKS, RDS for MySQL, Confluent Cloud, IAM, região `sa-east-1`). A execução do projeto é local e na CI do GitHub | ADR 0008 | Justificativa completa; capacidade medida com hardware documentado |
+| Arquitetura alvo na AWS | Justificativa das decisões de arquitetura (EKS, RDS for MySQL, Confluent Cloud, IAM, região `sa-east-1`). A execução do projeto é local; sem CI ativa nesta versão | ADR 0008 | Justificativa completa; capacidade medida com hardware documentado |
 
 ### Ainda dependem de validação de negócio
 
@@ -45,7 +45,7 @@ Os valores ficam em configuração com placeholders. Nenhum valor é inventado (
 - [x] Teste de smoke por serviço: contexto sobe e `/actuator/health` responde `UP`.
 - [x] Docker Compose com Kafka (KRaft 3.9.1), MySQL 8.4 e criação de tópicos e DLQs com 12 partições.
 - [x] Script de inicialização do MySQL com um banco e usuário por serviço.
-- [x] CI com GitHub Actions executando `mvn verify` (arquivo criado; execução remota ainda não verificada).
+- [~] CI com GitHub Actions executando `mvn verify`: workflow criado e depois removido nesta versão. A execução remota nunca foi verificada.
 - [x] `.gitignore` e README com instruções de execução.
 
 ### Critérios de conclusão
@@ -54,7 +54,7 @@ Os valores ficam em configuração com placeholders. Nenhum valor é inventado (
 2. [x] `docker compose up` sobe Kafka e MySQL saudáveis.
 3. [x] Os tópicos existem com 12 partições, conforme ADR 0005 (verificado com `kafka-topics --describe`).
 4. [x] Os três serviços iniciam como processos e respondem `UP` em `/actuator/health` (Transaction 8081, Fraud 8082 e Notification 8083). Na primeira execução a 8081 estava ocupada por outro stack local; após a remoção desses containers, o Transaction voltou à porta padrão.
-5. [ ] A pipeline de CI executa o mesmo build no GitHub. Só será confirmado após o primeiro push.
+5. [ ] A pipeline de CI executa o mesmo build no GitHub. Pendente: o workflow foi removido nesta versão e precisa de decisão para ser reativado.
 
 ### Achados da execução
 
@@ -68,7 +68,7 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 
 ## 3. Fases 2 a 5 — implementadas
 
-**Status:** implementadas e cobertas por testes automatizados (`mvn verify`, 68 testes, todos passando). Os critérios de capacidade (spike test, carga até 25.000 TPS e SLA de 500 ms) **não foram validados** com hardware documentado e permanecem pendentes (seção 4).
+**Status:** implementadas e cobertas por testes automatizados (`mvn verify`: 64 testes no build padrão, 31 unitários, 21 de integração, 8 ponta a ponta e 4 smoke; o spike test da BR-01 fica fora do build). Os critérios de capacidade (spike test, carga até 25.000 TPS e SLA de 500 ms) **não foram validados** com hardware documentado e permanecem pendentes (seção 4).
 
 ### 3.1 Fase 2 — Transaction Service
 
@@ -78,7 +78,7 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 - [x] Idempotência em duas etapas: a chave é reservada como `IN_PROGRESS` em transação própria; a transação, o registro de outbox e a chave como `COMPLETED` são gravados juntos.
 - [x] Outbox com publicador por polling, `SKIP LOCKED`, lote de 500 e intervalo de 200 ms (ADR 0003). Produtor com `acks=all` e `enable.idempotence=true`. Chave Kafka `customerId`.
 - [x] Erros sem detalhes internos (spec §7).
-- [x] Testes: 16 unitários e 10 de integração com MySQL 8.4 e Kafka reais (Testcontainers), incluindo concorrência (I-07), atomicidade (O-01), falhas do Kafka (O-02, O-03) e retenção (R5), mais o smoke test.
+- [x] Testes: 14 unitários e 10 de integração com MySQL 8.4 e Kafka reais (Testcontainers), incluindo concorrência (I-07), atomicidade (O-01), falhas do Kafka (O-02, O-03) e retenção (R5), mais o smoke test.
 
 **Achados**
 
@@ -100,7 +100,7 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 - [x] 3b — BR-01 (frequência) em MySQL, com janela deslizante que inclui a transação atual (histórico em `transaction_history`, índice por cliente e instante).
 - [x] 3c — explicabilidade por regra (`ruleCode`, `description`, `reason`), inbox na mesma transação da análise, retry de 1 s, 2 s e 4 s, DLQ `transaction-events.DLT` e publicação de `FraudDetected` com `alertEventId` gerado uma vez.
 - [x] Classificação: nenhum sinal é LOW, um sinal é MEDIUM, dois ou mais é HIGH. Política provisória (`business-rules.md` §7).
-- [x] Testes: 13 unitários, 4 de integração com Kafka e MySQL reais e o smoke test.
+- [x] Testes: 11 unitários, 6 de integração com Kafka e MySQL reais (incluindo retry e DLT) e o smoke test.
 - [x] Spike test da BR-01 escrito (`FrequencyRuleSpikeTest`, tag `spike`, fora do build padrão).
 
 **Achados**
@@ -155,7 +155,7 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 **Pendente**
 
 - [~] Carga progressiva até 25.000 TPS (L-06). Script versionado em `load-tests/transactions.js`; execução com hardware documentado pendente.
-- [ ] Medição de lag por consumer group e partição (L-07): o código não expõe essas métricas ainda.
+- [~] Lag por consumer group exposto e testado (`exposesKafkaConsumerLagMetrics`). Medição sob carga, por partição, pendente (L-07).
 - [ ] SLA de 500 ms como máximo absoluto para todas as transações, medido com hardware documentado (L-05). A latência do e2e é só informativa.
 - [ ] Atraso do outbox (L-03) não medido.
 
@@ -164,10 +164,10 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 1. **Spike test da BR-01** com hardware documentado (R1). Decide manter MySQL ou evoluir para Redis ou janela pré-agregada.
 2. **OIDC do EKS com o Confluent**: somente análise (ADR 0008, seção 2.3).
 3. **Orçamento de 500 ms por etapa**: análise, incluindo o intervalo de polling do outbox de 200 ms, que pode consumir até 200 ms (ADR 0008, seção 2.8).
-4. **Métricas de latência de publicação e de consumo** do outbox e do consumidor (L-07). O lag já está exposto e verificado pelo teste `exposesKafkaConsumerLagMetrics`.
+4. **Latência de consumo isolada** (publicação até início do processamento) do consumidor (L-07). Latência de publicação do outbox (`outbox.publish.latency`) já está implementada e exposta; o lag já está exposto e verificado pelo teste `exposesKafkaConsumerLagMetrics`.
 5. **Carga progressiva** até 25.000 TPS com hardware documentado (L-06).
 6. ~~Jobs de limpeza de idempotência e inbox (R5)~~: feito (ADR 0009, seção 2.1).
-7. **Primeiro push e execução da CI remota** (critério 5 da Fase 1).
+7. **Decidir sobre a CI remota** (critério 5 da Fase 1): reativar o workflow do GitHub Actions ou manter a verificação só local.
 8. **Validação de negócio** de BR-01, BR-02, BR-03, BR-04 e da política de classificação.
 
 ## 5. Registro de riscos (estado atual)

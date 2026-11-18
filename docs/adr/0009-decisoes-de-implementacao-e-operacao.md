@@ -33,7 +33,7 @@ As Fases 2 a 5 foram implementadas. Algumas pendências técnicas ficaram sem de
 
 ### 2.3 Execução e verificação
 
-O projeto é executado localmente com Docker Compose (Kafka em KRaft e MySQL 8.4, um broker, fator de replicação 1) e verificado no GitHub pela CI, que roda `mvn verify` com Testcontainers. Assim a verificação usa MySQL e Kafka reais sem depender de infraestrutura externa.
+O projeto é executado localmente com Docker Compose (Kafka em KRaft e MySQL 8.4, um broker, fator de replicação 1). A verificação é feita localmente com `mvn verify`, com Testcontainers, o que usa MySQL e Kafka reais sem depender de infraestrutura externa. O workflow de CI no GitHub foi removido nesta versão e deve ser reativado quando houver decisão de retomá-lo.
 
 A arquitetura alvo do ADR 0008 justifica o desenho; ela não é o ambiente de execução do projeto.
 
@@ -59,9 +59,10 @@ Os testes usam limites explícitos e marcados como de teste (`threshold-cents=10
 
 ### 2.8 Observabilidade de lag e latência
 
-- Consumer lag: métricas do cliente Kafka expostas pelo Micrometer no Actuator (`kafka.consumer.fetch.manager.records.lag`). Verificado pelo teste `exposesKafkaConsumerLagMetrics`.
+- Consumer lag: métricas do cliente Kafka expostas pelo Micrometer no Actuator do Fraud Detection (`kafka.consumer.fetch.manager.records.lag`). Verificado pelo teste `exposesKafkaConsumerLagMetrics`.
 - Latência ponta a ponta de todas as transações: `fraud.alert.latency` para as que geram alerta (término: publicação do alerta) e `fraud.analysis.latency` para as LOW (término: gravação da análise). O SLA vale para as duas.
-- Outbox (R3): `outbox.publish.latency`, o tempo de envio de cada evento até o ack do Kafka, e `outbox.pending.oldest.age.seconds`, a idade do pendente mais antigo. A segunda é o sinal de atraso do publicador. Foi implementada porque o atraso de publicação é um risco registrado (R3), e sem ela o atraso só apareceria olhando a tabela.
+- Outbox (R3), no Transaction Service: `outbox.publish.latency`, o tempo de envio de cada evento até o ack do Kafka, e `outbox.pending.oldest.age.seconds`, a idade do pendente mais antigo. A segunda é o sinal de atraso do publicador. Ambas são expostas pelo Actuator (`/actuator/metrics`), que passou a incluir `metrics` nesse serviço.
+- Latência de consumo: não há métrica separada. A latência do consumidor é coberta por `fraud.analysis.latency` e `fraud.alert.latency`, que medem do recebimento até o término. Uma métrica de consumo isolada (publicação até início do processamento) continua pendente.
 - Limites de alerta operacional e destinatários continuam pendentes de definição pela equipe.
 
 ### 2.9 Dados pessoais

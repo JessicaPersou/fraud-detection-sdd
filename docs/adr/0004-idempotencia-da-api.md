@@ -15,7 +15,7 @@ Tabela `idempotency_key` com chave única por `(idempotency_key)` e os campos: `
 
 | Situação | Resposta |
 |---|---|
-| Chave nova | Processa, grava transação e chave na mesma transação de banco. Retorna `201`. |
+| Chave nova | Reserva a chave como `IN_PROGRESS` em transação própria; depois grava transação, outbox e a chave como `COMPLETED` na mesma transação de banco. Retorna `201`. |
 | Mesma chave, mesmo `request_hash`, `COMPLETED` | Retorna a resposta armazenada (`200`), sem efeito colateral. |
 | Mesma chave, mesmo `request_hash`, `IN_PROGRESS` | Retorna `409 Conflict` com indicação de tentar novamente. |
 | Mesma chave, `request_hash` diferente | Retorna `422 Unprocessable Content`. |
@@ -24,6 +24,10 @@ Tabela `idempotency_key` com chave única por `(idempotency_key)` e os campos: `
 - Concorrência: a restrição de unicidade da chave no banco é a barreira final. A segunda inserção concorrente falha e é tratada como `409` ou como replay.
 - Retenção: 24 horas (`expires_at`). Após expirar, a mesma chave pode ser reutilizada.
 - Não expor detalhes internos nas mensagens de erro.
+
+## Atualização (implementação)
+
+A reserva foi implementada em duas etapas, não em uma transação única: a chave é comprometida como `IN_PROGRESS` antes da transação de negócio, para que uma reentrega concorrente enxergue a reserva. Detalhes e timeout em `ADR 0009`, seção 2.4.
 
 ## Justificativa
 
