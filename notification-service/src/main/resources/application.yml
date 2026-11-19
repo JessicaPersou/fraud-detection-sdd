@@ -1,6 +1,9 @@
 spring:
   application:
     name: notification-service
+  # Perfil padrão para execução local. Em produção, definir SPRING_PROFILES_ACTIVE=prod (a variável de ambiente sobrescreve este valor).
+  profiles:
+    active: local
   mail:
     host: ${MAILPIT_HOST:localhost}      # servidor SMTP de teste (docker-compose)
     port: ${MAILPIT_SMTP_PORT:1025}

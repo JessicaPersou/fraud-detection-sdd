@@ -1,6 +1,9 @@
 spring:
   application:
     name: fraud-service
+  # Perfil padrão para execução local. Em produção, definir SPRING_PROFILES_ACTIVE=prod (a variável de ambiente sobrescreve este valor).
+  profiles:
+    active: local
   datasource:
     # Credenciais de desenvolvimento local (infrastructure/docker). Em outros ambientes, usar variáveis de ambiente.
     url: ${FRAUD_DB_URL:jdbc:mysql://localhost:3306/fraud_db}

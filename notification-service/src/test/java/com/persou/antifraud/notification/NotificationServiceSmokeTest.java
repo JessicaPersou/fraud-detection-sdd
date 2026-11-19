@@ -30,8 +30,9 @@ class NotificationServiceSmokeTest {
         registry.add("spring.kafka.bootstrap-servers", SharedInfrastructure::bootstrapServers);
         registry.add("notification.channel", () -> "EMAIL");
         registry.add("notification.recipient", () -> "ops-test@example.invalid");
-        // O provedor é "simulated" neste teste; não há SMTP (Mailpit) no runner do CI,
-        // então o health check de e-mail não pode derrubar /actuator/health.
+        // O provedor é "simulated" neste teste (o perfil local define smtp, ADR 0011); não há SMTP (Mailpit)
+        // no ambiente de teste, então o health check de e-mail não pode derrubar /actuator/health.
+        registry.add("notification.provider", () -> "simulated");
         registry.add("management.health.mail.enabled", () -> "false");
     }
 

@@ -29,7 +29,7 @@ O sistema precisa mostrar o caminho de uma transação do início ao fim: a requ
 
 - **O que:** o Notification envia e-mail por SMTP. Em demonstração, o servidor é o Mailpit, que roda no docker-compose e captura as mensagens sem entregá-las. A interface web fica em `http://localhost:8025`.
 - **Por que Mailpit:** não entrega nada a terceiros, não exige conta nem remetente verificado, e mostra o e-mail completo na interface. Isso permite demonstrar o alerta de ponta a ponta sem risco.
-- **Como ativar:** `NOTIFICATION_PROVIDER=smtp`. O padrão é `simulated`, usado pelos testes.
+- **Como ativar:** `NOTIFICATION_PROVIDER=smtp`. O padrão do código é `simulated`, usado pelos testes. O perfil `local` (ADR 0011) já define `smtp`, para que a execução local envie para o Mailpit.
 - **Alternativas descartadas:** SendGrid (entrega real, mas exige conta, chave de API, remetente verificado e internet na apresentação; fica como evolução); MailHog (projeto menos mantido que o Mailpit).
 - **Arquitetura:** o adaptador `SmtpNotificationProvider` implementa a porta `NotificationProvider`. O domínio não muda, e trocar o servidor é uma questão de configuração.
 - **Dados pessoais:** o destinatário vem de variável de ambiente e não é gravado em log. O erro propagado não mostra o servidor SMTP.

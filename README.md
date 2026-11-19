@@ -44,31 +44,7 @@ mvn -DskipTests package
 
 Os JARs ficam em `<serviço>/target/<serviço>-0.1.0-SNAPSHOT-exec.jar`.
 
-**3. Definir as variáveis obrigatórias.** Fraud Detection e Notification não sobem sem elas. Os valores são de demonstração, não de negócio (ver a seção "Variáveis obrigatórias" abaixo).
-
-Bash (Git Bash):
-
-```bash
-export FRAUD_AMOUNT_THRESHOLD_CENTS=100000
-export FRAUD_FREQUENCY_MAX_TRANSACTIONS=5
-export FRAUD_FREQUENCY_WINDOW=PT60S
-export NOTIFICATION_CHANNEL=EMAIL
-export NOTIFICATION_RECIPIENT=ops-demo@example.invalid
-export NOTIFICATION_PROVIDER=smtp
-```
-
-PowerShell:
-
-```powershell
-$env:FRAUD_AMOUNT_THRESHOLD_CENTS = "100000"
-$env:FRAUD_FREQUENCY_MAX_TRANSACTIONS = "5"
-$env:FRAUD_FREQUENCY_WINDOW = "PT60S"
-$env:NOTIFICATION_CHANNEL = "EMAIL"
-$env:NOTIFICATION_RECIPIENT = "ops-demo@example.invalid"
-$env:NOTIFICATION_PROVIDER = "smtp"
-```
-
-**4. Iniciar cada serviço em um terminal separado.** As variáveis do passo 3 valem só para o terminal em que foram definidas. Se abrir um terminal novo, defina-as de novo antes de iniciar o serviço.
+**3. Iniciar cada serviço em um terminal separado.** Não é preciso definir variáveis: os serviços sobem com o perfil `local`, que traz valores de demonstração (ver "Variáveis obrigatórias" abaixo).
 
 ```bash
 java -jar transaction-service/target/transaction-service-0.1.0-SNAPSHOT-exec.jar
@@ -78,7 +54,7 @@ java -jar notification-service/target/notification-service-0.1.0-SNAPSHOT-exec.j
 
 Cada serviço fica em primeiro plano e imprime os logs, incluindo os spans de trace. Para encerrar um serviço, use `Ctrl+C` no terminal dele.
 
-**5. Verificar que estão no ar.** Cada serviço responde `UP` em `/actuator/health`:
+**4. Verificar que estão no ar.** Cada serviço responde `UP` em `/actuator/health`:
 
 | Serviço | Porta | Verificação |
 |---|---|---|
@@ -86,9 +62,9 @@ Cada serviço fica em primeiro plano e imprime os logs, incluindo os spans de tr
 | Fraud Detection Service | 8082 | `curl -s localhost:8082/actuator/health` |
 | Notification Service | 8083 | `curl -s localhost:8083/actuator/health` |
 
-Se algum serviço não subir, a causa mais comum é uma variável obrigatória faltando (passo 3) ou uma porta ocupada. Para trocar a porta, defina `SERVER_PORT`.
+Se algum serviço não subir, a causa mais comum é uma porta ocupada (para trocá-la, defina `SERVER_PORT`) ou o perfil ter sido trocado para algo diferente de `local` sem as variáveis obrigatórias (ver "Variáveis obrigatórias").
 
-**6. Enviar uma transação de teste:**
+**5. Enviar uma transação de teste:**
 
 ```bash
 curl -s -X POST localhost:8081/transactions -H "Idempotency-Key: $(uuidgen)" \
@@ -97,7 +73,7 @@ curl -s -X POST localhost:8081/transactions -H "Idempotency-Key: $(uuidgen)" \
 
 Esse valor passa do limite de demonstração, então a análise sai como MEDIUM e o alerta é enviado. Para ver o e-mail, abra `http://localhost:8025` (Mailpit). Mais exemplos estão na seção "Demonstração do caminho feliz e das fraudes".
 
-**7. Parar tudo:**
+**6. Parar tudo:**
 
 ```bash
 docker compose -f infrastructure/docker/docker-compose.yml down
@@ -106,6 +82,8 @@ docker compose -f infrastructure/docker/docker-compose.yml down
 Esse comando para a infraestrutura e mantém os dados do MySQL. Para apagar também os dados, use `down -v`. Atenção: o script que cria os bancos roda só na primeira vez em que o volume do MySQL é criado. Se você apagar o volume, a próxima subida recria os bancos. Se você não apagar, os bancos continuam como estavam.
 
 ## Como rodar os testes
+
+A estratégia (pirâmide, ferramentas, cobertura por garantia e o que ainda não foi medido) está em `docs/estrategia-testes.md`. Esta seção mostra só os comandos.
 
 ### Pré-requisitos
 
@@ -137,7 +115,7 @@ Notas sobre os comandos:
 
 | Tipo | Quantidade | Onde está | Docker |
 |---|---|---|---|
-| Unitários | 31 | `DomainModelTest`, `ReceiveTransactionServiceTest` (transaction); `AnalyzeTransactionServiceTest`, `FraudRuleEvaluatorTest` (fraud); `SmtpNotificationProviderTest`, `ProcessFraudAlertServiceTest` (notification) | Não |
+| Unitários | 35 | `DomainModelTest`, `ReceiveTransactionServiceTest` (transaction); `AnalyzeTransactionServiceTest`, `FraudRuleEvaluatorTest` (fraud); `SmtpNotificationProviderTest`, `ProcessFraudAlertServiceTest` (notification) | Não |
 | Integração | 21 | Módulos `*-service`, com MySQL e Kafka reais: `TransactionApiIntegrationTest`, `AtomicityIntegrationTest`, `OutboxPublishingResilienceIntegrationTest`, `RetentionCleanupIntegrationTest`, `FraudPipelineIntegrationTest`, `ConsumerRetryIntegrationTest`, `NotificationPipelineIntegrationTest` | Sim |
 | Smoke | 4 | `*SmokeTest` em cada serviço: o contexto sobe e o health responde `UP` | Sim |
 | Ponta a ponta | 8 | `e2e-tests/AntifraudEndToEndTest`: os três serviços na mesma JVM | Sim |
@@ -169,7 +147,7 @@ Pré-requisitos: JDK 21, Maven 3.9+ e Docker com Compose v2.
 mvn verify
 ```
 
-O build padrão executa 64 testes e o spike test da BR-01 fica fora dele. Comandos por tipo de teste, o que cada um cobre e como resolver problemas estão em "Como rodar os testes", no início desta seção.
+O build padrão executa 68 testes e o spike test da BR-01 fica fora dele. Comandos por tipo de teste, o que cada um cobre e como resolver problemas estão em "Como rodar os testes", no início desta seção.
 
 ### 2. Infraestrutura local
 
@@ -193,7 +171,7 @@ Gere os JARs com `mvn -DskipTests package` e inicie cada um com `java -jar`.
 
 #### Variáveis obrigatórias
 
-Limites de negócio e destinatário não têm valor padrão no código (ADR 0001, decisão 10). Sem eles, Fraud Detection e Notification não sobem:
+Limites de negócio e destinatário não têm valor padrão fora do perfil `local` (ADR 0001, decisão 10; ADR 0011). Fora desse perfil, sem as variáveis abaixo Fraud Detection e Notification não sobem:
 
 | Variável | Serviço | Uso |
 |---|---|---|
@@ -203,15 +181,14 @@ Limites de negócio e destinatário não têm valor padrão no código (ADR 0001
 | `NOTIFICATION_CHANNEL` | Notification | Canal de envio (ex.: `EMAIL`) |
 | `NOTIFICATION_RECIPIENT` | Notification | Destinatário |
 
-Os valores de negócio ainda aguardam validação (`docs/business-rules.md`, seção 6). Para demonstração, use os valores abaixo, que são de demonstração e não de negócio:
+Os valores de negócio ainda aguardam validação (`docs/business-rules.md`, seção 6).
+
+**Execução local (perfil `local`).** Os `application.yml` ativam o perfil `local` por padrão. Ele traz valores de demonstração em `application-local.yml` de cada serviço, então `java -jar` sobe sem exportar nada. Esses valores não são de negócio. O provedor de notificação do perfil `local` é `smtp`, que envia para o Mailpit do docker-compose (ADR 0010).
+
+**Produção ou outro ambiente.** Defina `SPRING_PROFILES_ACTIVE=prod` (ou qualquer valor diferente de `local`). Sem o perfil `local`, as variáveis acima passam a ser obrigatórias e a aplicação não sobe sem elas. Variáveis de ambiente têm precedência sobre o arquivo do perfil, então também servem para trocar um valor de demonstração sem editar arquivos:
 
 ```bash
-export FRAUD_AMOUNT_THRESHOLD_CENTS=100000
-export FRAUD_FREQUENCY_MAX_TRANSACTIONS=5
-export FRAUD_FREQUENCY_WINDOW=PT60S
-export NOTIFICATION_CHANNEL=EMAIL
-export NOTIFICATION_RECIPIENT=ops-demo@example.invalid
-export NOTIFICATION_PROVIDER=smtp   # envia para o Mailpit do docker-compose (ADR 0010); padrão: simulated
+export FRAUD_AMOUNT_THRESHOLD_CENTS=50000   # exemplo: sobrescreve o valor do perfil local
 ```
 
 Os alertas por e-mail chegam ao Mailpit, que captura as mensagens sem entregá-las a ninguém. Abra `http://localhost:8025` para ver cada e-mail.
@@ -257,5 +234,7 @@ Nesta versão não há pipeline de CI ativa no repositório: o workflow `.github
 ## Decisões de referência
 
 - Arquitetura e decisões: `docs/adr/`.
+- Estratégia de testes: `docs/estrategia-testes.md`.
+- Limitações e possíveis evoluções, com gatilhos: `docs/limitacoes-e-evolucoes.md`.
 - Estado das fases, riscos e próximas ações: `docs/roadmap-execucao.md`.
 - Escopo e limites do estudo: `docs/project-overview.md`.

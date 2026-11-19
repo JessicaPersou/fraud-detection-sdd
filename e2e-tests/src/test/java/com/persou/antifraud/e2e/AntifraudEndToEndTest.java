@@ -83,7 +83,8 @@ class AntifraudEndToEndTest {
                 "spring.kafka.consumer.auto-offset-reset", "earliest",
                 "notification.kafka.consumer-group", "notification-e2e-" + group,
                 "notification.channel", "EMAIL",
-                "notification.recipient", "ops-test@example.invalid"));
+                "notification.recipient", "ops-test@example.invalid",
+                "notification.provider", "simulated"));
 
         transactionPort = Integer.parseInt(transactionService.getEnvironment().getProperty("local.server.port"));
     }

@@ -52,6 +52,8 @@ class NotificationPipelineIntegrationTest {
         registry.add("spring.kafka.consumer.auto-offset-reset", () -> "earliest");
         registry.add("notification.channel", () -> "EMAIL");
         registry.add("notification.recipient", () -> "ops-test@example.invalid");
+        // Fixa o provedor de teste: o perfil local (ADR 0011) define smtp, que não existe no ambiente de teste.
+        registry.add("notification.provider", () -> "simulated");
         registry.add("notification.kafka.consumer-group", () -> "notif-it-" + UUID.randomUUID());
     }
 

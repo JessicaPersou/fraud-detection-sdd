@@ -47,6 +47,8 @@ fraud:
 
 Os valores ainda não foram validados pela área de negócio. Nenhum valor padrão deve ser inventado no código.
 
+> **Atualização (ADR 0011):** para execução local, o perfil `local` traz valores de demonstração em `application-local.yml`, e o perfil é ativado por padrão. Fora dele, as variáveis continuam obrigatórias. O ADR 0011 detalha essa regra.
+
 ---
 
 ## 2. Estrutura do repositório

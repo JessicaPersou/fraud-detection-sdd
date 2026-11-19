@@ -17,6 +17,7 @@ Este documento organiza a resolução das pendências e a execução das fases d
 | Moeda e precisão | Somente BRL na v1, expoente ISO 4217 | ADR 0006 | Novas moedas mediante validação |
 | Stack e ferramentas | Java 21, Spring Boot 4.1.2, Maven, Kafka KRaft, MySQL 8.4 | ADR 0007 | Atualizações em PRs dedicados |
 | Arquitetura alvo na AWS | Justificativa das decisões de arquitetura (EKS, RDS for MySQL, Confluent Cloud, IAM, região `sa-east-1`). A execução do projeto é local; sem CI ativa nesta versão | ADR 0008 | Justificativa completa; capacidade medida com hardware documentado |
+| Execução local sem configuração manual | Perfil `local` ativado por padrão, com valores de demonstração em `application-local.yml`. Fora dele, as variáveis continuam obrigatórias | ADR 0011 | Teste que verifique a falha com o perfil `prod` |
 
 ### Ainda dependem de validação de negócio
 
@@ -68,7 +69,7 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 
 ## 3. Fases 2 a 5 — implementadas
 
-**Status:** implementadas e cobertas por testes automatizados (`mvn verify`: 64 testes no build padrão, 31 unitários, 21 de integração, 8 ponta a ponta e 4 smoke; o spike test da BR-01 fica fora do build). Os critérios de capacidade (spike test, carga até 25.000 TPS e SLA de 500 ms) **não foram validados** com hardware documentado e permanecem pendentes (seção 4).
+**Status:** implementadas e cobertas por testes automatizados (`mvn verify`: 68 testes no build padrão, 35 unitários, 21 de integração, 8 ponta a ponta e 4 smoke; o spike test da BR-01 fica fora do build). Os critérios de capacidade (spike test, carga até 25.000 TPS e SLA de 500 ms) **não foram validados** com hardware documentado e permanecem pendentes (seção 4).
 
 ### 3.1 Fase 2 — Transaction Service
 
@@ -154,7 +155,7 @@ Fora do escopo da Fase 1: entidades, endpoints de negócio, integração com Kaf
 
 **Pendente**
 
-- [~] Carga progressiva até 25.000 TPS (L-06). Script versionado em `load-tests/transactions.js`; execução com hardware documentado pendente.
+- [~] Carga progressiva até 25.000 TPS (L-06). Script versionado em `load-tests/transactions.js`. A execução foi iniciada em uma máquina pessoal e a máquina travou antes de concluir, sem resultado válido. Refazer com hardware documentado é pendência.
 - [~] Lag por consumer group exposto e testado (`exposesKafkaConsumerLagMetrics`). Medição sob carga, por partição, pendente (L-07).
 - [ ] SLA de 500 ms como máximo absoluto para todas as transações, medido com hardware documentado (L-05). A latência do e2e é só informativa.
 - [ ] Atraso do outbox (L-03) não medido.

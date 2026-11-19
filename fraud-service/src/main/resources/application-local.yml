@@ -1,0 +1,10 @@
+# Perfil local: valores de DEMONSTRAÇÃO para subir o serviço sem definir variáveis.
+# Não são valores de negócio (business-rules.md, seção 6). Em qualquer outro ambiente, use SPRING_PROFILES_ACTIVE=prod
+# e defina as variáveis FRAUD_* explicitamente. Variáveis de ambiente têm precedência sobre este arquivo.
+fraud:
+  rules:
+    amount:
+      threshold-cents: 100000        # BR-02 (demonstração)
+    frequency:
+      max-transactions: 5            # BR-01 (demonstração)
+      window: PT60S                  # BR-01 (demonstração)

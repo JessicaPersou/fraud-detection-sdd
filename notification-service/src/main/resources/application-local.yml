@@ -1,0 +1,8 @@
+# Perfil local: valores de DEMONSTRAÇÃO para subir o serviço sem definir variáveis.
+# O destinatário é fictício (domínio .invalid) e as mensagens vão para o Mailpit do docker-compose (ADR 0010).
+# Em qualquer outro ambiente, use SPRING_PROFILES_ACTIVE=prod e defina NOTIFICATION_* explicitamente.
+# Variáveis de ambiente têm precedência sobre este arquivo.
+notification:
+  channel: EMAIL
+  recipient: ops-demo@example.invalid
+  provider: smtp
