@@ -13,6 +13,7 @@ Sistema de detecção de transações suspeitas em tempo real. Estudo de caso co
 - `docs/adr/`: decisões arquiteturais. ADRs 0001 a 0007 e 0009 e 0010 registram decisões de implementação e operação. O ADR 0008 justifica a arquitetura alvo na AWS.
 - `docs/cenarios-teste.md`: cenários de teste e cobertura automatizada.
 - `docs/roadmap-execucao.md`: estado das fases, riscos e próximas ações.
+- `docs/evidencias-execucao-local.md`: resultados da execução local (exemplos `curl` e e-mail de alerta).
 - `specs/`: especificações dos três serviços.
 - `load-tests/`: script de carga progressiva (k6).
 

@@ -80,10 +80,8 @@ public class ProcessFraudAlertService implements ProcessFraudAlertUseCase {
     }
 
     private NotificationMessage message(FraudDetectedEvent event) {
-        String subject = "Alerta antifraude: risco " + event.riskLevel();
-        String body = "Transação " + event.transactionId() + " classificada com risco " + event.riskLevel()
-                + " (" + event.triggeredRules().size() + " regra(s) acionada(s)).";
-        return new NotificationMessage(event.eventId(), channel, recipient, subject, body);
+        return new NotificationMessage(event.eventId(), channel, recipient, AlertEmailTemplate.subject(event),
+                AlertEmailTemplate.text(event), AlertEmailTemplate.html(event));
     }
 
     /** Mensagem curta, sem detalhes internos. A exceção completa fica no log do consumidor. */
